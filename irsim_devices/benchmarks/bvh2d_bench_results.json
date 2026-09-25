@@ -1,0 +1,59 @@
+{
+  "note": "Correctness bug fixed (denom sign error in ray_seg_t). All 1500 beams now hit correctly.",
+  "n_beams": 1500,
+  "n_segs_32": 440,
+  "n_segs_360": 4376,
+  "n_tris_32": 1704,
+  "timing_us": {
+    "o3d_python": 285.5,
+    "embree3d": 156.4,
+    "bvh2d_scalar_n32": 531.3,
+    "bvh2d_scalar_n360": 919.4
+  },
+  "speedup_vs_o3d": {
+    "embree3d": 1.8,
+    "bvh2d_scalar_n32": 0.5,
+    "bvh2d_scalar_n360": 0.3
+  },
+  "speedup_vs_v3_baseline_1205us": {
+    "embree3d": 7.7,
+    "bvh2d_scalar_n32": 2.3,
+    "bvh2d_scalar_n360": 1.3
+  },
+  "hit_counts": {
+    "bvh2d_scalar": 1500,
+    "embree3d": 1500,
+    "o3d": 1500
+  },
+  "root_cause_scalar_slow": {
+    "bvh_type": "BVH2 binary tree, recursive, scalar node tests",
+    "bvh_depth_levels": 9,
+    "ns_per_beam_actual": 354,
+    "explanation": "BVH2 tests 1 AABB per call. With ~9 levels and ~25-50 node visits per beam including recursion + cache, cost is ~35 ns/node. Embree uses BVH4/BVH8 (4-8 AABBs per SIMD instruction) at ~4 levels."
+  },
+  "simd_bvh_estimates": {
+    "bvh4_sse2_us": "88-133",
+    "bvh4_neon_us": "88-133",
+    "bvh8_avx2_us": "44-88",
+    "rationale": "BVH4 tests 4 child AABBs simultaneously; log4(440)~4.5 levels vs log2(440)~9; eliminates recursion. 2D geometry simpler than 3D (2 slab tests vs 3, ray-seg vs ray-triangle)"
+  },
+  "embree_platform_matrix": {
+    "linux_x86_64": "apt libembree-dev (Ubuntu 20.04+) — available",
+    "linux_arm64": "source build only (Embree 4.1+, ~30 min compile) — no apt package",
+    "macos_x86_64": "brew install embree — available",
+    "macos_arm64": "brew install embree M-series — available since Embree 4.1 NEON",
+    "windows_x86_64": "Intel GitHub releases (pre-built DLLs) — available",
+    "windows_arm64": "no official build",
+    "raspberry_pi5_arm64": "source build only"
+  },
+  "standalone_2d_library_verdict": {
+    "feasibility": "HIGH",
+    "estimated_peak_us": 50,
+    "vs_o3d_python_speedup_est": "5-6x",
+    "vs_embree3d_speedup_est": "2-3x",
+    "dependencies": "none (pure C++, pybind11 for Python binding)",
+    "simd_coverage": "SSE2 baseline all x86_64 | AVX2 runtime dispatch (Haswell 2013+) | NEON all ARM64",
+    "distribution": "scikit-build-core + CMake, platform wheels, binary ~150 KB",
+    "loc_estimate": "600-800 lines C++ (BVH build + SSE2/AVX2/NEON node tests + pybind11 bindings)"
+  }
+}

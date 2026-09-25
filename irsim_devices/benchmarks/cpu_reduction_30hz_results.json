@@ -1,0 +1,93 @@
+{
+  "v1_shapely": {
+    "throughput_hz": 2344.9870915260003,
+    "lat_p50_ms": 0.3977720007242169,
+    "lat_p99_ms": 0.6344504000480813,
+    "cpu_per_core_pct": [
+      15.0,
+      14.4,
+      14.3,
+      9.9
+    ],
+    "cpu_total_pct": 53.6,
+    "n_steps_30hz": 150
+  },
+  "v2_precompute_allcores": {
+    "throughput_hz": 2124.1027014582064,
+    "lat_p50_ms": 0.41210100062016863,
+    "lat_p99_ms": 0.7188077198952633,
+    "cpu_per_core_pct": [
+      12.5,
+      8.2,
+      12.3,
+      12.9
+    ],
+    "cpu_total_pct": 45.9,
+    "n_steps_30hz": 150,
+    "n_omp_threads": 4
+  },
+  "v2t_precompute_2threads": {
+    "throughput_hz": 1379.979909562528,
+    "lat_p50_ms": 0.7016620002104901,
+    "lat_p99_ms": 0.9949519603469524,
+    "cpu_per_core_pct": [
+      0.4,
+      4.6,
+      5.4,
+      11.5
+    ],
+    "cpu_total_pct": 21.9,
+    "n_steps_30hz": 150,
+    "n_omp_threads": 2
+  },
+  "prefilter": [
+    {
+      "label": "centre",
+      "total": 824,
+      "kept": 824,
+      "range_m": 30.0,
+      "position": [
+        25.0,
+        15.0
+      ]
+    },
+    {
+      "label": "corner",
+      "total": 824,
+      "kept": 551,
+      "range_m": 30.0,
+      "position": [
+        5.0,
+        5.0
+      ]
+    },
+    {
+      "label": "centre@10m",
+      "total": 824,
+      "kept": 402,
+      "range_m": 10.0,
+      "position": [
+        25.0,
+        15.0
+      ]
+    }
+  ],
+  "moving_robot": {
+    "v1_hz": 1556.029448136797,
+    "v1_lat_p50_ms": 0.6420919999072794,
+    "v1_lat_p99_ms": 0.8440814403729751,
+    "v2t_hz": 1407.8615649727763,
+    "v2t_lat_p50_ms": 0.7063214998197509,
+    "v2t_lat_p99_ms": 0.9695470004771772,
+    "speedup": 0.9047782268250525
+  },
+  "scene": {
+    "n_objects": 26,
+    "n_linestrings_total": 824
+  },
+  "config": {
+    "beams": 1500,
+    "range_m": 30.0,
+    "target_hz": 30.0
+  }
+}

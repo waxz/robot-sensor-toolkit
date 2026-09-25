@@ -1,0 +1,32 @@
+# irsim world that matches the warehouse_world.urdf footprint (50 x 30 m).
+#
+# Used with 06_irsim_bridge.py --world models/warehouse_world.urdf so that
+# the URDF geometry (walls, columns, racks, docks) is injected as irsim
+# obstacles and the 2-D lidar raycasts against them.
+#
+# Robot starts near the south-west corner and navigates to the north-east.
+
+world:
+  height: 32          # 2 m margin around the 30 m warehouse
+  width: 52           # 2 m margin around the 50 m warehouse
+  step_time: 0.05     # 20 Hz
+  sample_time: 0.05
+  collision_mode: 'stop'
+  control_mode: 'auto'
+
+robot:
+  - kinematics: {name: 'diff'}
+    shape: {name: 'circle', radius: 0.2}
+    state: [5.0, 5.0, 0.0]
+    goal: [[45.0, 25.0, 0.0]]
+    behavior: {name: 'dash'}
+    sensors:
+      - name: 'lidar2d'
+        range_min: 0.1
+        range_max: 20.0        # 20 m to reach across the warehouse
+        angle_range: 6.2832    # 360 degrees
+        number: 360
+        noise: false
+        offset: [0.0, 0.0, 0.0]
+        plot:
+          alpha: 0.15

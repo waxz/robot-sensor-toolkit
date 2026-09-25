@@ -1,0 +1,30 @@
+{
+  "scene": {
+    "n_tris": 1704,
+    "circle_res": 32
+  },
+  "n_beams": 1500,
+  "fov_deg": 360.0,
+  "timing_us": {
+    "o3d_python": 366.8,
+    "cpp_embree_scalar": 148.1,
+    "cpp_embree_packet8": 138.5
+  },
+  "speedup": {
+    "scalar_vs_o3d": 2.5,
+    "packet8_vs_o3d": 2.6
+  },
+  "overhead_anatomy_us": {
+    "np_concat": 17.9,
+    "tensor_construct": 12.8,
+    "cast_rays_internal_overhead": 120.0,
+    "numpy_unpack": 0.8,
+    "pure_embree_bvh": 148.0
+  },
+  "interpretation": {
+    "o3d_python_overhead_us": 219.0,
+    "cpp_practical_floor_us": 148.0,
+    "vs_v3_baseline_us": 1205,
+    "cpp_vs_v3_speedup_x": 8.1
+  }
+}

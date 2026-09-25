@@ -1,0 +1,36 @@
+{
+  "model": {
+    "vertices": 3104,
+    "triangles": 4692,
+    "segments_2d": 1548
+  },
+  "raycast": {
+    "n_beams_2d": 1500,
+    "hits_2d": 1500,
+    "n_rays_3d": 28800,
+    "hits_3d": 28766,
+    "sensor_pos": [
+      12.0,
+      15.0,
+      1.5
+    ]
+  },
+  "timing_ms": {
+    "embree2d_scalar": 0.177,
+    "embree2d_packet8": 0.134,
+    "embree2d_packet16": 0.155,
+    "embree3d_vlp16_omp": 1.844,
+    "embree3d_vlp16_pkt16_omp": 1.631,
+    "o3d_3d_vlp16": 2.525
+  },
+  "speedup_2d": {
+    "packet8_vs_scalar": 1.32,
+    "packet16_vs_scalar": 1.14,
+    "packet16_vs_packet8": 0.86
+  },
+  "speedup_3d_pkt16_vs_scalar_omp": 1.13,
+  "speedup_3d_vs_o3d": {
+    "scalar_omp": 1.37,
+    "pkt16_omp": 1.55
+  }
+}

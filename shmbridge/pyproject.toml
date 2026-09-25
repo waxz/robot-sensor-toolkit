@@ -1,0 +1,44 @@
+[build-system]
+requires = ["scikit-build-core>=0.8", "pybind11>=2.12"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "shmbridge"
+version = "2.1.0"
+description = "POSIX shared-memory seqlock bridge for Python and C++ robot control"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+numpy = ["numpy>=1.24"]
+dev   = ["pytest", "numpy", "pybind11>=2.12"]
+
+[tool.scikit-build]
+# Source layout: Python package in src/shmbridge, C++ extension in csrc/
+wheel.packages = ["src/shmbridge"]
+cmake.build-type = "Release"
+
+# ── cibuildwheel ──────────────────────────────────────────────────────────────
+[tool.cibuildwheel]
+build = "cp310-* cp311-* cp312-* cp313-*"
+# Skip 32-bit Windows (Win32), musl-libc (Alpine), and PyPy.
+skip = "*-win32 *-musllinux* pp*"
+
+[tool.cibuildwheel.linux]
+# manylinux_2_28 = glibc 2.28 / GCC 12; good C++17 support.
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
+
+[tool.cibuildwheel.windows]
+# MSVC ships with everything we need; NOMINMAX is set in platform.hpp.
+
+# ── ruff ──────────────────────────────────────────────────────────────────────
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "I", "UP", "B", "RUF", "C4", "SIM", "ISC", "RET", "PT"]
+ignore = ["E501"]

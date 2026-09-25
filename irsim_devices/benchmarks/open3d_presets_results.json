@@ -1,0 +1,170 @@
+{
+  "config": {
+    "M_all": 824,
+    "M_segs_aligned": 824
+  },
+  "presets": {
+    "SICK TiM571": {
+      "n_beams": 811,
+      "fov_deg": 270,
+      "range_max": 25.0,
+      "hz": 15,
+      "v3_p50_us": 696.5860000320845,
+      "v3_p95_us": 853.9788500172561,
+      "o3d_p50_us": 298.1755000064368,
+      "o3d_p95_us": 389.90634996309825,
+      "speedup_x": 2.34
+    },
+    "Hokuyo UTM-30LX": {
+      "n_beams": 1080,
+      "fov_deg": 270,
+      "range_max": 30.0,
+      "hz": 40,
+      "v3_p50_us": 875.2660000084234,
+      "v3_p95_us": 1156.689300003677,
+      "o3d_p50_us": 349.93350001855106,
+      "o3d_p95_us": 473.99669997787436,
+      "speedup_x": 2.5
+    },
+    "Hokuyo URG-04LX": {
+      "n_beams": 683,
+      "fov_deg": 240,
+      "range_max": 4.0,
+      "hz": 10,
+      "v3_p50_us": 104.96799998804818,
+      "v3_p95_us": 160.72080001947597,
+      "o3d_p50_us": 240.09649999356952,
+      "o3d_p95_us": 308.6610999986305,
+      "speedup_x": 0.44
+    },
+    "LiDAR 2D default": {
+      "n_beams": 1500,
+      "fov_deg": 360,
+      "range_max": 30.0,
+      "hz": 30,
+      "v3_p50_us": 1205.005499997469,
+      "v3_p95_us": 1355.6572499851427,
+      "o3d_p50_us": 401.9190000121853,
+      "o3d_p95_us": 499.70755000856565,
+      "speedup_x": 3.0
+    },
+    "RPLIDAR A2": {
+      "n_beams": 1147,
+      "fov_deg": 360,
+      "range_max": 12.0,
+      "hz": 10,
+      "v3_p50_us": 503.0355000030795,
+      "v3_p95_us": 621.5199000052961,
+      "o3d_p50_us": 345.88950003922037,
+      "o3d_p95_us": 435.74020002665736,
+      "speedup_x": 1.45
+    },
+    "Velodyne VLP-16 H": {
+      "n_beams": 1800,
+      "fov_deg": 360,
+      "range_max": 100.0,
+      "hz": 20,
+      "v3_p50_us": 1392.1934999814312,
+      "v3_p95_us": 1555.1602000186904,
+      "o3d_p50_us": 425.65499998659106,
+      "o3d_p95_us": 524.5814999540244,
+      "speedup_x": 3.27
+    }
+  },
+  "rotation": {
+    "no_rotation_us": {
+      "p50": 363.4279999857881,
+      "p95": 449.9025000058054
+    },
+    "with_rotation_us": {
+      "p50": 363.54549999373376,
+      "p95": 447.8317000206289
+    },
+    "rotation_overhead_us": 0.11750000794563675
+  },
+  "dynamic": {
+    "0": {
+      "n_dynamic": 0,
+      "v3_rebuild_step_p50_us": 1224.246000020912,
+      "o3d_rebuild_step_p50_us": 4340.522000006786
+    },
+    "1": {
+      "n_dynamic": 1,
+      "v3_rebuild_step_p50_us": 43880.2515000134,
+      "o3d_rebuild_step_p50_us": 4838.458999984141
+    },
+    "5": {
+      "n_dynamic": 5,
+      "v3_rebuild_step_p50_us": 51658.33950002252,
+      "o3d_rebuild_step_p50_us": 5502.157999984547
+    },
+    "10": {
+      "n_dynamic": 10,
+      "v3_rebuild_step_p50_us": 61453.24099998106,
+      "o3d_rebuild_step_p50_us": 6232.871999998224
+    },
+    "20": {
+      "n_dynamic": 20,
+      "v3_rebuild_step_p50_us": 81659.64699998085,
+      "o3d_rebuild_step_p50_us": 7724.991499998168
+    }
+  },
+  "accuracy": {
+    "note": "Measured vs analytical cylinder ground truth (not v3 polygon approximation). The original 10cm 'error' was a comparison artifact from differing polygon resolutions between v3 and O3D.",
+    "n_beams": 1500,
+    "circle_res_used": 360,
+    "o3d_hits": 1500,
+    "analytical_hits": 1500,
+    "agreement_pct": 100.0,
+    "max_diff_m": 4.3e-05,
+    "mean_diff_m": 1.8e-06,
+    "p99_diff_m": 1.8e-05,
+    "chord_setback_mm_at_n360": 0.011,
+    "worst_case_tangent_mm_at_n360": 0.65,
+    "spec_9mm_at_alpha89deg": "PASS"
+  },
+  "cpu": {
+    "SICK TiM571": {
+      "n_beams": 811,
+      "hz": 15,
+      "v3_cpu_pct": 10.0,
+      "o3d_cpu_pct": 2.0,
+      "cpu_reduction_pct": 8.0
+    },
+    "Hokuyo UTM-30LX": {
+      "n_beams": 1080,
+      "hz": 40,
+      "v3_cpu_pct": 29.0,
+      "o3d_cpu_pct": 4.7,
+      "cpu_reduction_pct": 24.3
+    },
+    "Hokuyo URG-04LX": {
+      "n_beams": 683,
+      "hz": 10,
+      "v3_cpu_pct": 5.7,
+      "o3d_cpu_pct": 1.5,
+      "cpu_reduction_pct": 4.2
+    },
+    "LiDAR 2D default": {
+      "n_beams": 1500,
+      "hz": 30,
+      "v3_cpu_pct": 21.7,
+      "o3d_cpu_pct": 4.0,
+      "cpu_reduction_pct": 17.7
+    },
+    "RPLIDAR A2": {
+      "n_beams": 1147,
+      "hz": 10,
+      "v3_cpu_pct": 6.7,
+      "o3d_cpu_pct": 2.5,
+      "cpu_reduction_pct": 4.2
+    },
+    "Velodyne VLP-16 H": {
+      "n_beams": 1800,
+      "hz": 20,
+      "v3_cpu_pct": 16.4,
+      "o3d_cpu_pct": 3.7,
+      "cpu_reduction_pct": 12.7
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "n_beams_2d": 1500,
+  "n_segs_32": 440,
+  "n_segs_360": 4376,
+  "n_rays_vlp16": 28800,
+  "n_tris": 1704,
+  "hits_embree2d_scalar": 1500,
+  "timing_ms": {
+    "o3d_2d_python": 0.193,
+    "embree2d_scalar_32": 0.131,
+    "embree2d_packet8_32": 0.094,
+    "embree2d_scalar_360": 0.136,
+    "o3d_3d_vlp16": 0.710,
+    "embree3d_vlp16_omp": 0.641
+  },
+  "speedup_vs_o3d_2d": {
+    "embree2d_scalar_32": 1.5,
+    "embree2d_packet8_32": 2.1
+  },
+  "speedup_vs_o3d_3d": {
+    "embree3d_vlp16": 1.1
+  }
+}

@@ -1,0 +1,81 @@
+{
+  "world_urdf": {
+    "robot_name": "warehouse_world",
+    "links": [
+      "world",
+      "structure",
+      "scene_bounds",
+      "dock_portal_0",
+      "dock_portal_1",
+      "dock_portal_2",
+      "pillar_sw",
+      "pillar_nw"
+    ],
+    "geometry_counts": {
+      "mesh": 2,
+      "box": 4,
+      "cylinder": 4
+    }
+  },
+  "robot_urdf": {
+    "robot_name": "diff_robot",
+    "links": [
+      "base_link",
+      "left_wheel_link",
+      "right_wheel_link",
+      "caster_link",
+      "lidar_link",
+      "imu_link"
+    ],
+    "joints": [
+      {
+        "name": "left_wheel_joint",
+        "type": "continuous",
+        "parent": "base_link",
+        "child": "left_wheel_link"
+      },
+      {
+        "name": "right_wheel_joint",
+        "type": "continuous",
+        "parent": "base_link",
+        "child": "right_wheel_link"
+      },
+      {
+        "name": "caster_joint",
+        "type": "fixed",
+        "parent": "base_link",
+        "child": "caster_link"
+      },
+      {
+        "name": "lidar_joint",
+        "type": "fixed",
+        "parent": "base_link",
+        "child": "lidar_link"
+      },
+      {
+        "name": "imu_joint",
+        "type": "fixed",
+        "parent": "base_link",
+        "child": "imu_link"
+      }
+    ]
+  },
+  "model_comparison": {
+    "programmatic": {
+      "vertices": 3104,
+      "triangles": 4692,
+      "segments_2d": 1548,
+      "hits_2d": 1500
+    },
+    "urdf_loaded": {
+      "vertices": 3104,
+      "triangles": 4692,
+      "segments_2d": 1160,
+      "hits_2d": 1499
+    }
+  },
+  "timing_ms": {
+    "embree2d_packet8_prog": 0.204,
+    "embree2d_packet8_urdf": 0.185
+  }
+}

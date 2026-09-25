@@ -1,0 +1,581 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Warehouse world URDF — 50 × 30 × 6 m industrial warehouse.
+  All geometry uses primitive shapes (box, cylinder) for wireframe rendering.
+  Layout:
+    • Floor slab + 4 outer walls + roof
+    • 3 × 3 structural column grid at (10,25,40) × (7,15,23)
+    • 6 overhead beams (3 along Y-axis + 3 along X-axis) at z ≈ 5.7 m
+    • 4 rows of 5 storage-rack bays (20 total)  — amber wireframe
+    • 3 loading-dock portals on the south wall — yellow frames
+-->
+<robot name="warehouse_world">
+
+  <link name="world"/>
+
+  <!-- ============================================================
+       FLOOR SLAB  50 × 30 × 0.1 m
+       ============================================================ -->
+  <link name="floor">
+    <visual>
+      <origin xyz="25 15 0.05" rpy="0 0 0"/>
+      <geometry><box size="50 30 0.1"/></geometry>
+      <material name="floor_concrete"><color rgba="0.35 0.37 0.40 1.0"/></material>
+    </visual>
+  </link>
+  <joint name="j_floor" type="fixed">
+    <parent link="world"/><child link="floor"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ============================================================
+       OUTER WALLS  — 6 m tall, 0.3 m thick
+       ============================================================ -->
+  <link name="wall_south">
+    <visual>
+      <origin xyz="25 0.15 3" rpy="0 0 0"/>
+      <geometry><box size="50 0.3 6"/></geometry>
+      <material name="wall_grey"><color rgba="0.52 0.57 0.64 0.88"/></material>
+    </visual>
+  </link>
+  <joint name="j_wall_south" type="fixed">
+    <parent link="world"/><child link="wall_south"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="wall_north">
+    <visual>
+      <origin xyz="25 29.85 3" rpy="0 0 0"/>
+      <geometry><box size="50 0.3 6"/></geometry>
+      <material name="wall_grey"><color rgba="0.52 0.57 0.64 0.88"/></material>
+    </visual>
+  </link>
+  <joint name="j_wall_north" type="fixed">
+    <parent link="world"/><child link="wall_north"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="wall_west">
+    <visual>
+      <origin xyz="0.15 15 3" rpy="0 0 0"/>
+      <geometry><box size="0.3 30 6"/></geometry>
+      <material name="wall_grey"><color rgba="0.52 0.57 0.64 0.88"/></material>
+    </visual>
+  </link>
+  <joint name="j_wall_west" type="fixed">
+    <parent link="world"/><child link="wall_west"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="wall_east">
+    <visual>
+      <origin xyz="49.85 15 3" rpy="0 0 0"/>
+      <geometry><box size="0.3 30 6"/></geometry>
+      <material name="wall_grey"><color rgba="0.52 0.57 0.64 0.88"/></material>
+    </visual>
+  </link>
+  <joint name="j_wall_east" type="fixed">
+    <parent link="world"/><child link="wall_east"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ============================================================
+       ROOF SLAB  50 × 30 × 0.25 m  at z = 6.12
+       ============================================================ -->
+  <link name="roof">
+    <visual>
+      <origin xyz="25 15 6.12" rpy="0 0 0"/>
+      <geometry><box size="50 30 0.25"/></geometry>
+      <material name="roof_mat"><color rgba="0.42 0.46 0.54 0.72"/></material>
+    </visual>
+  </link>
+  <joint name="j_roof" type="fixed">
+    <parent link="world"/><child link="roof"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ============================================================
+       STRUCTURAL COLUMNS  — 3×3 grid
+       positions (x, y):  (10,7) (25,7) (40,7)
+                          (10,15)(25,15)(40,15)
+                          (10,23)(25,23)(40,23)
+       each: cylinder r=0.18 m, 6 m tall, centre at (x, y, 3)
+       ============================================================ -->
+  <link name="col_r1c1">
+    <visual>
+      <origin xyz="0 0 3" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.18" length="6"/></geometry>
+      <material name="col_steel"><color rgba="0.68 0.72 0.78 1.0"/></material>
+    </visual>
+  </link>
+  <joint name="j_col_r1c1" type="fixed">
+    <parent link="world"/><child link="col_r1c1"/>
+    <origin xyz="10 7 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="col_r1c2">
+    <visual>
+      <origin xyz="0 0 3" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.18" length="6"/></geometry>
+      <material name="col_steel"><color rgba="0.68 0.72 0.78 1.0"/></material>
+    </visual>
+  </link>
+  <joint name="j_col_r1c2" type="fixed">
+    <parent link="world"/><child link="col_r1c2"/>
+    <origin xyz="25 7 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="col_r1c3">
+    <visual>
+      <origin xyz="0 0 3" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.18" length="6"/></geometry>
+      <material name="col_steel"><color rgba="0.68 0.72 0.78 1.0"/></material>
+    </visual>
+  </link>
+  <joint name="j_col_r1c3" type="fixed">
+    <parent link="world"/><child link="col_r1c3"/>
+    <origin xyz="40 7 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="col_r2c1">
+    <visual>
+      <origin xyz="0 0 3" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.18" length="6"/></geometry>
+      <material name="col_steel"><color rgba="0.68 0.72 0.78 1.0"/></material>
+    </visual>
+  </link>
+  <joint name="j_col_r2c1" type="fixed">
+    <parent link="world"/><child link="col_r2c1"/>
+    <origin xyz="10 15 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="col_r2c2">
+    <visual>
+      <origin xyz="0 0 3" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.18" length="6"/></geometry>
+      <material name="col_steel"><color rgba="0.68 0.72 0.78 1.0"/></material>
+    </visual>
+  </link>
+  <joint name="j_col_r2c2" type="fixed">
+    <parent link="world"/><child link="col_r2c2"/>
+    <origin xyz="25 15 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="col_r2c3">
+    <visual>
+      <origin xyz="0 0 3" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.18" length="6"/></geometry>
+      <material name="col_steel"><color rgba="0.68 0.72 0.78 1.0"/></material>
+    </visual>
+  </link>
+  <joint name="j_col_r2c3" type="fixed">
+    <parent link="world"/><child link="col_r2c3"/>
+    <origin xyz="40 15 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="col_r3c1">
+    <visual>
+      <origin xyz="0 0 3" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.18" length="6"/></geometry>
+      <material name="col_steel"><color rgba="0.68 0.72 0.78 1.0"/></material>
+    </visual>
+  </link>
+  <joint name="j_col_r3c1" type="fixed">
+    <parent link="world"/><child link="col_r3c1"/>
+    <origin xyz="10 23 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="col_r3c2">
+    <visual>
+      <origin xyz="0 0 3" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.18" length="6"/></geometry>
+      <material name="col_steel"><color rgba="0.68 0.72 0.78 1.0"/></material>
+    </visual>
+  </link>
+  <joint name="j_col_r3c2" type="fixed">
+    <parent link="world"/><child link="col_r3c2"/>
+    <origin xyz="25 23 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="col_r3c3">
+    <visual>
+      <origin xyz="0 0 3" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.18" length="6"/></geometry>
+      <material name="col_steel"><color rgba="0.68 0.72 0.78 1.0"/></material>
+    </visual>
+  </link>
+  <joint name="j_col_r3c3" type="fixed">
+    <parent link="world"/><child link="col_r3c3"/>
+    <origin xyz="40 23 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ============================================================
+       OVERHEAD BEAMS  at z ≈ 5.65–5.70 m
+       3 running along Y at x = 10, 25, 40  (0.30 × 30 × 0.40 m)
+       3 running along X at y = 7,  15, 23  (50 × 0.30 × 0.35 m)
+       ============================================================ -->
+  <link name="beam_y_x10">
+    <visual>
+      <origin xyz="0 15 5.70" rpy="0 0 0"/>
+      <geometry><box size="0.30 30 0.40"/></geometry>
+      <material name="beam_mat"><color rgba="0.46 0.50 0.58 0.90"/></material>
+    </visual>
+  </link>
+  <joint name="j_beam_y_x10" type="fixed">
+    <parent link="world"/><child link="beam_y_x10"/>
+    <origin xyz="10 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="beam_y_x25">
+    <visual>
+      <origin xyz="0 15 5.70" rpy="0 0 0"/>
+      <geometry><box size="0.30 30 0.40"/></geometry>
+      <material name="beam_mat"><color rgba="0.46 0.50 0.58 0.90"/></material>
+    </visual>
+  </link>
+  <joint name="j_beam_y_x25" type="fixed">
+    <parent link="world"/><child link="beam_y_x25"/>
+    <origin xyz="25 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="beam_y_x40">
+    <visual>
+      <origin xyz="0 15 5.70" rpy="0 0 0"/>
+      <geometry><box size="0.30 30 0.40"/></geometry>
+      <material name="beam_mat"><color rgba="0.46 0.50 0.58 0.90"/></material>
+    </visual>
+  </link>
+  <joint name="j_beam_y_x40" type="fixed">
+    <parent link="world"/><child link="beam_y_x40"/>
+    <origin xyz="40 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="beam_x_y7">
+    <visual>
+      <origin xyz="25 0 5.60" rpy="0 0 0"/>
+      <geometry><box size="50 0.30 0.35"/></geometry>
+      <material name="beam_mat"><color rgba="0.46 0.50 0.58 0.90"/></material>
+    </visual>
+  </link>
+  <joint name="j_beam_x_y7" type="fixed">
+    <parent link="world"/><child link="beam_x_y7"/>
+    <origin xyz="0 7 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="beam_x_y15">
+    <visual>
+      <origin xyz="25 0 5.60" rpy="0 0 0"/>
+      <geometry><box size="50 0.30 0.35"/></geometry>
+      <material name="beam_mat"><color rgba="0.46 0.50 0.58 0.90"/></material>
+    </visual>
+  </link>
+  <joint name="j_beam_x_y15" type="fixed">
+    <parent link="world"/><child link="beam_x_y15"/>
+    <origin xyz="0 15 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="beam_x_y23">
+    <visual>
+      <origin xyz="25 0 5.60" rpy="0 0 0"/>
+      <geometry><box size="50 0.30 0.35"/></geometry>
+      <material name="beam_mat"><color rgba="0.46 0.50 0.58 0.90"/></material>
+    </visual>
+  </link>
+  <joint name="j_beam_x_y23" type="fixed">
+    <parent link="world"/><child link="beam_x_y23"/>
+    <origin xyz="0 23 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ============================================================
+       STORAGE RACKS — 4 rows × 5 bays = 20 units
+       bay size: 8 m × 1.20 m × 4.20 m  (centre height 2.10 m)
+       row y-centres: 3.0, 11.0, 19.0, 27.0
+       bay x-centres: 7, 16, 25, 34, 43
+       Rows sit in the aisles between column lines (y = 7, 15, 23).
+       ============================================================ -->
+
+  <!-- ── Row 1  y = 3.0 (south service aisle) ── -->
+  <link name="rack_r1b1">
+    <visual>
+      <origin xyz="0 0 2.1" rpy="0 0 0"/>
+      <geometry><box size="8 1.2 4.2"/></geometry>
+      <material name="rack_amber"><color rgba="0.62 0.55 0.28 0.82"/></material>
+    </visual>
+  </link>
+  <joint name="j_rack_r1b1" type="fixed">
+    <parent link="world"/><child link="rack_r1b1"/>
+    <origin xyz="7 3.0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="rack_r1b2">
+    <visual>
+      <origin xyz="0 0 2.1" rpy="0 0 0"/>
+      <geometry><box size="8 1.2 4.2"/></geometry>
+      <material name="rack_amber"><color rgba="0.62 0.55 0.28 0.82"/></material>
+    </visual>
+  </link>
+  <joint name="j_rack_r1b2" type="fixed">
+    <parent link="world"/><child link="rack_r1b2"/>
+    <origin xyz="16 3.0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="rack_r1b3">
+    <visual>
+      <origin xyz="0 0 2.1" rpy="0 0 0"/>
+      <geometry><box size="8 1.2 4.2"/></geometry>
+      <material name="rack_amber"><color rgba="0.62 0.55 0.28 0.82"/></material>
+    </visual>
+  </link>
+  <joint name="j_rack_r1b3" type="fixed">
+    <parent link="world"/><child link="rack_r1b3"/>
+    <origin xyz="25 3.0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="rack_r1b4">
+    <visual>
+      <origin xyz="0 0 2.1" rpy="0 0 0"/>
+      <geometry><box size="8 1.2 4.2"/></geometry>
+      <material name="rack_amber"><color rgba="0.62 0.55 0.28 0.82"/></material>
+    </visual>
+  </link>
+  <joint name="j_rack_r1b4" type="fixed">
+    <parent link="world"/><child link="rack_r1b4"/>
+    <origin xyz="34 3.0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="rack_r1b5">
+    <visual>
+      <origin xyz="0 0 2.1" rpy="0 0 0"/>
+      <geometry><box size="8 1.2 4.2"/></geometry>
+      <material name="rack_amber"><color rgba="0.62 0.55 0.28 0.82"/></material>
+    </visual>
+  </link>
+  <joint name="j_rack_r1b5" type="fixed">
+    <parent link="world"/><child link="rack_r1b5"/>
+    <origin xyz="43 3.0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ── Row 2  y = 11.0 (main aisle zone between col-y7 and col-y15) ── -->
+  <link name="rack_r2b1">
+    <visual>
+      <origin xyz="0 0 2.1" rpy="0 0 0"/>
+      <geometry><box size="8 1.2 4.2"/></geometry>
+      <material name="rack_amber"><color rgba="0.60 0.52 0.26 0.82"/></material>
+    </visual>
+  </link>
+  <joint name="j_rack_r2b1" type="fixed">
+    <parent link="world"/><child link="rack_r2b1"/>
+    <origin xyz="7 11.0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="rack_r2b2">
+    <visual>
+      <origin xyz="0 0 2.1" rpy="0 0 0"/>
+      <geometry><box size="8 1.2 4.2"/></geometry>
+      <material name="rack_amber"><color rgba="0.60 0.52 0.26 0.82"/></material>
+    </visual>
+  </link>
+  <joint name="j_rack_r2b2" type="fixed">
+    <parent link="world"/><child link="rack_r2b2"/>
+    <origin xyz="16 11.0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="rack_r2b3">
+    <visual>
+      <origin xyz="0 0 2.1" rpy="0 0 0"/>
+      <geometry><box size="8 1.2 4.2"/></geometry>
+      <material name="rack_amber"><color rgba="0.60 0.52 0.26 0.82"/></material>
+    </visual>
+  </link>
+  <joint name="j_rack_r2b3" type="fixed">
+    <parent link="world"/><child link="rack_r2b3"/>
+    <origin xyz="25 11.0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="rack_r2b4">
+    <visual>
+      <origin xyz="0 0 2.1" rpy="0 0 0"/>
+      <geometry><box size="8 1.2 4.2"/></geometry>
+      <material name="rack_amber"><color rgba="0.60 0.52 0.26 0.82"/></material>
+    </visual>
+  </link>
+  <joint name="j_rack_r2b4" type="fixed">
+    <parent link="world"/><child link="rack_r2b4"/>
+    <origin xyz="34 11.0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="rack_r2b5">
+    <visual>
+      <origin xyz="0 0 2.1" rpy="0 0 0"/>
+      <geometry><box size="8 1.2 4.2"/></geometry>
+      <material name="rack_amber"><color rgba="0.60 0.52 0.26 0.82"/></material>
+    </visual>
+  </link>
+  <joint name="j_rack_r2b5" type="fixed">
+    <parent link="world"/><child link="rack_r2b5"/>
+    <origin xyz="43 11.0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ── Row 3  y = 19.0 (main aisle zone between col-y15 and col-y23) ── -->
+  <link name="rack_r3b1">
+    <visual>
+      <origin xyz="0 0 2.1" rpy="0 0 0"/>
+      <geometry><box size="8 1.2 4.2"/></geometry>
+      <material name="rack_amber"><color rgba="0.58 0.50 0.24 0.82"/></material>
+    </visual>
+  </link>
+  <joint name="j_rack_r3b1" type="fixed">
+    <parent link="world"/><child link="rack_r3b1"/>
+    <origin xyz="7 19.0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="rack_r3b2">
+    <visual>
+      <origin xyz="0 0 2.1" rpy="0 0 0"/>
+      <geometry><box size="8 1.2 4.2"/></geometry>
+      <material name="rack_amber"><color rgba="0.58 0.50 0.24 0.82"/></material>
+    </visual>
+  </link>
+  <joint name="j_rack_r3b2" type="fixed">
+    <parent link="world"/><child link="rack_r3b2"/>
+    <origin xyz="16 19.0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="rack_r3b3">
+    <visual>
+      <origin xyz="0 0 2.1" rpy="0 0 0"/>
+      <geometry><box size="8 1.2 4.2"/></geometry>
+      <material name="rack_amber"><color rgba="0.58 0.50 0.24 0.82"/></material>
+    </visual>
+  </link>
+  <joint name="j_rack_r3b3" type="fixed">
+    <parent link="world"/><child link="rack_r3b3"/>
+    <origin xyz="25 19.0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="rack_r3b4">
+    <visual>
+      <origin xyz="0 0 2.1" rpy="0 0 0"/>
+      <geometry><box size="8 1.2 4.2"/></geometry>
+      <material name="rack_amber"><color rgba="0.58 0.50 0.24 0.82"/></material>
+    </visual>
+  </link>
+  <joint name="j_rack_r3b4" type="fixed">
+    <parent link="world"/><child link="rack_r3b4"/>
+    <origin xyz="34 19.0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="rack_r3b5">
+    <visual>
+      <origin xyz="0 0 2.1" rpy="0 0 0"/>
+      <geometry><box size="8 1.2 4.2"/></geometry>
+      <material name="rack_amber"><color rgba="0.58 0.50 0.24 0.82"/></material>
+    </visual>
+  </link>
+  <joint name="j_rack_r3b5" type="fixed">
+    <parent link="world"/><child link="rack_r3b5"/>
+    <origin xyz="43 19.0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ── Row 4  y = 27.0 (north service aisle) ── -->
+  <link name="rack_r4b1">
+    <visual>
+      <origin xyz="0 0 2.1" rpy="0 0 0"/>
+      <geometry><box size="8 1.2 4.2"/></geometry>
+      <material name="rack_amber"><color rgba="0.56 0.48 0.22 0.82"/></material>
+    </visual>
+  </link>
+  <joint name="j_rack_r4b1" type="fixed">
+    <parent link="world"/><child link="rack_r4b1"/>
+    <origin xyz="7 27.0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="rack_r4b2">
+    <visual>
+      <origin xyz="0 0 2.1" rpy="0 0 0"/>
+      <geometry><box size="8 1.2 4.2"/></geometry>
+      <material name="rack_amber"><color rgba="0.56 0.48 0.22 0.82"/></material>
+    </visual>
+  </link>
+  <joint name="j_rack_r4b2" type="fixed">
+    <parent link="world"/><child link="rack_r4b2"/>
+    <origin xyz="16 27.0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="rack_r4b3">
+    <visual>
+      <origin xyz="0 0 2.1" rpy="0 0 0"/>
+      <geometry><box size="8 1.2 4.2"/></geometry>
+      <material name="rack_amber"><color rgba="0.56 0.48 0.22 0.82"/></material>
+    </visual>
+  </link>
+  <joint name="j_rack_r4b3" type="fixed">
+    <parent link="world"/><child link="rack_r4b3"/>
+    <origin xyz="25 27.0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="rack_r4b4">
+    <visual>
+      <origin xyz="0 0 2.1" rpy="0 0 0"/>
+      <geometry><box size="8 1.2 4.2"/></geometry>
+      <material name="rack_amber"><color rgba="0.56 0.48 0.22 0.82"/></material>
+    </visual>
+  </link>
+  <joint name="j_rack_r4b4" type="fixed">
+    <parent link="world"/><child link="rack_r4b4"/>
+    <origin xyz="34 27.0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="rack_r4b5">
+    <visual>
+      <origin xyz="0 0 2.1" rpy="0 0 0"/>
+      <geometry><box size="8 1.2 4.2"/></geometry>
+      <material name="rack_amber"><color rgba="0.56 0.48 0.22 0.82"/></material>
+    </visual>
+  </link>
+  <joint name="j_rack_r4b5" type="fixed">
+    <parent link="world"/><child link="rack_r4b5"/>
+    <origin xyz="43 27.0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ============================================================
+       LOADING-DOCK PORTALS  — 3 openings on south wall (y ≈ 0)
+       each: box 3.0 × 0.05 × 3.5 m  centred at z = 1.75
+       ============================================================ -->
+  <link name="dock_portal_0">
+    <visual>
+      <origin xyz="0 0 1.75" rpy="0 0 0"/>
+      <geometry><box size="3.0 0.05 3.5"/></geometry>
+      <material name="dock_frame"><color rgba="0.90 0.72 0.18 1.0"/></material>
+    </visual>
+  </link>
+  <joint name="world_to_dock_0" type="fixed">
+    <parent link="world"/><child link="dock_portal_0"/>
+    <origin xyz="5.0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="dock_portal_1">
+    <visual>
+      <origin xyz="0 0 1.75" rpy="0 0 0"/>
+      <geometry><box size="3.0 0.05 3.5"/></geometry>
+      <material name="dock_frame"><color rgba="0.90 0.72 0.18 1.0"/></material>
+    </visual>
+  </link>
+  <joint name="world_to_dock_1" type="fixed">
+    <parent link="world"/><child link="dock_portal_1"/>
+    <origin xyz="20.0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="dock_portal_2">
+    <visual>
+      <origin xyz="0 0 1.75" rpy="0 0 0"/>
+      <geometry><box size="3.0 0.05 3.5"/></geometry>
+      <material name="dock_frame"><color rgba="0.90 0.72 0.18 1.0"/></material>
+    </visual>
+  </link>
+  <joint name="world_to_dock_2" type="fixed">
+    <parent link="world"/><child link="dock_portal_2"/>
+    <origin xyz="35.0 0 0" rpy="0 0 0"/>
+  </joint>
+
+</robot>

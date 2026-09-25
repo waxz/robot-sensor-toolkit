@@ -1,0 +1,50 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C/C++ extensions and native artifacts
+*.so
+*.pyd
+*.dll
+*.dylib
+*.o
+*.obj
+*.lib
+*.exp
+
+# Distribution / packaging
+.Python
+build/
+dist/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# CMake
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+
+# Downloaded/vendored native SDKs (fetched by setup.py at build time)
+irsim_devices/cpp/embree-sdk/
+
+# Test / coverage
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.cache
+
+# Env / IDE
+.venv/
+venv/
+.vscode/
+.idea/
+
+# OS junk
+.DS_Store
+Thumbs.db
