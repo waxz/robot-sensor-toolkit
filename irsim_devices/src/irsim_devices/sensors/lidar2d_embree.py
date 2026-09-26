@@ -75,10 +75,15 @@ class EmbreeLidar2D(Lidar2D):
         super().__init__(*args, **kwargs)
         self._embree_scene = None
         self._use_packet8 = use_packet8
+        self._lidar_embree_error: str | None = None
         try:
             self._lidar_embree = _load_lidar_embree()
-        except ImportError:
-            self._lidar_embree = None  # fall back to parent kernel silently
+        except ImportError as exc:
+            # Falls back to the parent AVX2/NumPy kernel (see _step_fast) --
+            # not an error by itself, but build_embree_scene() below surfaces
+            # the reason loudly if the caller actually wanted Embree.
+            self._lidar_embree = None
+            self._lidar_embree_error = str(exc)
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -92,9 +97,14 @@ class EmbreeLidar2D(Lidar2D):
             use_packet8: Override the instance-level ``use_packet8`` setting.
         """
         if self._lidar_embree is None:
+            reason = (
+                f" ({self._lidar_embree_error})" if self._lidar_embree_error else ""
+            )
             raise RuntimeError(
-                "lidar_embree native module not found. "
-                "Build it from irsim_devices/cpp/lidar_embree.cpp."
+                f"lidar_embree native module not found{reason}. "
+                "Build it with `IRSIM_DEVICES_BUILD_EMBREE=1 pip install "
+                "-e '.[embree]'` from irsim_devices/, or manually from "
+                "irsim_devices/cpp/lidar_embree.cpp."
             )
         segs_f32 = np.ascontiguousarray(segs, dtype=np.float32)
         if segs_f32.ndim != 2 or segs_f32.shape[1] != 4:

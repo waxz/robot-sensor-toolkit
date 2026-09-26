@@ -57,10 +57,12 @@ class EmbreeLidar3D(Lidar3D):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._embree_scene3d = None
+        self._lidar_embree_error: str | None = None
         try:
             self._lidar_embree = _load_lidar_embree()
-        except ImportError:
+        except ImportError as exc:
             self._lidar_embree = None
+            self._lidar_embree_error = str(exc)
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -80,9 +82,14 @@ class EmbreeLidar3D(Lidar3D):
             soup:      float32 ``[T, 3, 3]`` triangle soup (alternative).
         """
         if self._lidar_embree is None:
+            reason = (
+                f" ({self._lidar_embree_error})" if self._lidar_embree_error else ""
+            )
             raise RuntimeError(
-                "lidar_embree native module not found. "
-                "Build it from irsim_devices/cpp/lidar_embree.cpp."
+                f"lidar_embree native module not found{reason}. "
+                "Build it with `IRSIM_DEVICES_BUILD_EMBREE=1 pip install "
+                "-e '.[embree]'` from irsim_devices/, or manually from "
+                "irsim_devices/cpp/lidar_embree.cpp."
             )
         scene = self._lidar_embree.EmbreeScene3D()
         if soup is not None:

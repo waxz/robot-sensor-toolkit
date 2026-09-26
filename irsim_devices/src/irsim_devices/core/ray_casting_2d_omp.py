@@ -85,11 +85,23 @@ def _find_compiled_ext() -> Path | None:
     return None
 
 
-def _try_build(force: bool = False) -> bool:
-    """Compile the C source via gcc (legacy fallback).  Returns True on success."""
+def _try_build(force: bool = False, verbose: bool = False) -> bool:
+    """Compile the C source via gcc (legacy fallback).  Returns True on success.
+
+    A failed attempt is reported to stderr when ``verbose=True`` -- silently
+    returning False here would otherwise be indistinguishable from "gcc isn't
+    installed" (expected, e.g. on Windows) versus "gcc is installed but the
+    compile genuinely failed" (a real problem worth knowing about).
+    """
     if not force and _SO_OUT.exists():
         return True
     if not _C_SRC.exists():
+        if verbose:
+            print(
+                f"[irsim_devices] ray_casting_omp.c not found at {_C_SRC}; "
+                "skipping legacy gcc fallback.",
+                flush=True,
+            )
         return False
     cmd = [
         "gcc",
@@ -106,11 +118,29 @@ def _try_build(force: bool = False) -> bool:
     try:
         subprocess.run(cmd, check=True, capture_output=True, timeout=60)
         return True
-    except (
-        subprocess.CalledProcessError,
-        subprocess.TimeoutExpired,
-        FileNotFoundError,
-    ):
+    except FileNotFoundError:
+        if verbose:
+            print(
+                "[irsim_devices] gcc not found; skipping legacy fallback compile "
+                "(expected on Windows/MSVC-only setups).",
+                flush=True,
+            )
+        return False
+    except subprocess.TimeoutExpired:
+        if verbose:
+            print(
+                "[irsim_devices] gcc compile of ray_casting_omp.c timed out after 60s.",
+                flush=True,
+            )
+        return False
+    except subprocess.CalledProcessError as exc:
+        if verbose:
+            stderr = exc.stderr.decode(errors="replace") if exc.stderr else ""
+            print(
+                "[irsim_devices] gcc compile of ray_casting_omp.c failed "
+                f"(exit {exc.returncode}):\n{stderr}",
+                flush=True,
+            )
         return False
 
 
@@ -230,7 +260,7 @@ def build_omp_lib(force: bool = False, verbose: bool = False) -> bool:
         _OMP_AVAILABLE = True
     else:
         # Fall back to runtime gcc compile (Linux only; ignored on Windows/macOS)
-        ok = _try_build(force=force)
+        ok = _try_build(force=force, verbose=verbose)
         if ok:
             _lib = _load_lib()
             _OMP_AVAILABLE = _lib is not None

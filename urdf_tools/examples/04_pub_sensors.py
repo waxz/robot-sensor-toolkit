@@ -82,7 +82,12 @@ class RaycastScene:
             from irsim_devices.sensors.lidar3d_embree import _load_lidar_embree
 
             lidar_embree = _load_lidar_embree()
-        except ImportError:
+        except ImportError as exc:
+            print(
+                f"[world] Embree extension not available ({exc}); "
+                "falling back to open3d.",
+                flush=True,
+            )
             return None
         scene = lidar_embree.EmbreeScene3D()
         scene.build(vertices, triangles)

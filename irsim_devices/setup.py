@@ -320,7 +320,22 @@ class EmbreeBuildExt(build_ext):
                 raise
 
     def run(self) -> None:
-        super().run()
+        try:
+            super().run()
+        except OSError as exc:
+            print(
+                "\n[ERROR] Build failed while writing/removing a built file "
+                f"({exc}).\n"
+                "This is almost always a Windows file lock: another Python "
+                "process (a running interpreter, IDE, or a previous "
+                "`import irsim_devices`) still has lidar_embree*.pyd or one "
+                "of its DLLs open. Close every Python process using "
+                "irsim_devices and re-run the install -- this is not a "
+                "problem with the extension itself.\n",
+                file=sys.stderr,
+                flush=True,
+            )
+            raise
         if sys.platform == "win32" and self.embree_status == "built":
             self._copy_dlls_to_source()
         _print_build_summary(self.embree_status)
@@ -335,6 +350,12 @@ class EmbreeBuildExt(build_ext):
         is copied on to ``src/irsim_devices/`` by the base ``run()`` we just
         called -- without this step the DLLs never follow it there, and
         ``import lidar_embree`` fails with a bare "DLL load failed".
+
+        A copy failure here (e.g. the same Windows file-lock issue as
+        ``run()`` above, but on one specific DLL) is reported as a clear
+        WARNING and does not fail the whole install: the .pyd itself already
+        built successfully, so the package is otherwise usable, and the
+        summary printed afterwards makes the degraded state visible.
         """
         embree_root = ensure_embree_sdk()
         if not embree_root:
@@ -347,9 +368,20 @@ class EmbreeBuildExt(build_ext):
                 continue
             for dll in bin_dir.glob("*.dll"):
                 dest = out_dir / dll.name
-                if dest.resolve() != dll.resolve():
+                if dest.resolve() == dll.resolve():
+                    continue
+                try:
                     shutil.copy2(dll, dest)
                     print(f"Copied {dll.name} -> {out_dir}", flush=True)
+                except OSError as exc:
+                    print(
+                        f"[WARNING] Could not copy {dll.name} to {out_dir} "
+                        f"({exc}). If `import lidar_embree` later fails with "
+                        "'DLL load failed', close any process using it and "
+                        "re-run the build.",
+                        file=sys.stderr,
+                        flush=True,
+                    )
 
 
 def _print_build_summary(embree_status: str) -> None:
