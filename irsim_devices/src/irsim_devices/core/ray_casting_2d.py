@@ -3,7 +3,12 @@
 Shared by :class:`~irsim_devices.sensors.lidar2d.Lidar2D`. The high-level
 :func:`cast_rays` function flattens already-detected object boundaries and
 returns the nearest object hit by every beam. The lower-level
-:func:`cast_ray_segments` function performs the vectorized numerical kernel.
+:func:`cast_ray_segments` function performs the vectorized numerical kernel
+and is pure NumPy -- shapely is only imported (lazily, inside the function
+body) by :func:`boundary_segments`, :func:`_ray_parameters`, and
+:func:`cast_rays`, which are the ones that actually take Shapely geometries
+as input. This lets :mod:`~irsim_devices.core.ray_casting_2d_omp`'s NumPy
+fallback reuse :func:`cast_ray_segments` without pulling shapely in.
 
 For a sensor origin in free space, this reproduces a GEOS ``difference`` scan
 to floating-point precision while avoiding the expensive overlay. FMCW exit
@@ -17,7 +22,6 @@ Typical use::
 """
 
 import numpy as np
-import shapely
 
 # Beam hits closer than this are treated as the origin itself (e.g. the sensor
 # sitting exactly on an obstacle edge) and ignored, matching GEOS's difference,
@@ -184,6 +188,8 @@ def boundary_segments(geometry):
         tuple[np.ndarray, np.ndarray]: ``(start, end)`` endpoint arrays, each of
         shape ``(M, 2)`` (``(0, 2)`` when the geometry has no edges).
     """
+    import shapely
+
     # Collect boundary linestrings: polygon rings via shapely.boundary, lines
     # as-is. shapely.get_parts flattens Multi* / GeometryCollection one level.
     lines = []
@@ -262,6 +268,8 @@ def _gather_obstacle_edges(
 
 def _ray_parameters(lidar_geometry, max_range: float) -> tuple[np.ndarray, np.ndarray]:
     """Extract the shared origin and unit directions from max-range beams."""
+    import shapely
+
     coordinates = shapely.get_coordinates(lidar_geometry)
     origin = coordinates[0]
     directions = (coordinates[1::2] - origin) / max_range
@@ -360,6 +368,8 @@ def cast_rays(
         tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: Ranges,
         indices into ``detected_objects``, origin, and directions.
     """
+    import shapely
+
     shapely.prepare(lidar_geometry)
     origin, directions = _ray_parameters(lidar_geometry, max_range)
     scan_envelope = shapely.buffer(shapely.points(origin), max_range)

@@ -26,8 +26,13 @@ cmake-build-*/
 CMakeFiles/
 CMakeCache.txt
 
-# Downloaded/vendored native SDKs (fetched by setup.py at build time)
+# Downloaded/vendored native SDKs (fetched by setup.py at build time, or
+# cached locally to avoid re-downloading -- see irsim_devices/setup.py)
 irsim_devices/cpp/embree-sdk/
+irsim_devices/embree-*.zip
+irsim_devices/embree-*.tar.gz
+irsim_devices/cpp/embree-*.zip
+irsim_devices/cpp/embree-*.tar.gz
 
 # Test / coverage
 .pytest_cache/

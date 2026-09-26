@@ -1,13 +1,9 @@
 from math import cos, pi, sin
 from typing import TYPE_CHECKING, Any, ClassVar
 
-import matplotlib.transforms as mtransforms
 import numpy as np
 import shapely
 import shapely as _shapely
-from matplotlib.collections import LineCollection
-from mpl_toolkits.mplot3d import Axes3D
-from mpl_toolkits.mplot3d.art3d import Line3DCollection
 from shapely import MultiLineString
 
 from irsim_devices.core.geo_utils import (
@@ -1070,6 +1066,11 @@ class Lidar2D:
             state: State vector [x, y, theta, ...] defining lidar position and orientation.
             **kwargs: Plotting options.
         """
+        import matplotlib.transforms as mtransforms
+        from matplotlib.collections import LineCollection
+        from mpl_toolkits.mplot3d import Axes3D
+        from mpl_toolkits.mplot3d.art3d import Line3DCollection
+
         lines = []
 
         if isinstance(ax, Axes3D):
@@ -1145,6 +1146,9 @@ class Lidar2D:
         """
         if not hasattr(self, "laser_LineCollection"):
             return
+
+        import matplotlib.transforms as mtransforms
+        from mpl_toolkits.mplot3d import Axes3D
 
         ax = self.laser_LineCollection.axes
         lines = []
