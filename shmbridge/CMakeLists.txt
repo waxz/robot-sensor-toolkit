@@ -12,6 +12,16 @@ option(SHMBRIDGE_NOTIFY      "Enable futex broadcast notify (Linux only)"       
 option(SHMBRIDGE_BUILD_TESTS "Build C++ unit tests (requires googletest)"              OFF)
 option(SHMBRIDGE_BUILD_BENCH "Build C++ microbenchmarks"                               OFF)
 
+message(STATUS "")
+message(STATUS "==================== shmbridge build configuration ====================")
+message(STATUS "  Compiler             : ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+message(STATUS "  Build type           : ${CMAKE_BUILD_TYPE}")
+message(STATUS "  SIMD (-march=native) : ${SHMBRIDGE_NATIVE_ARCH}")
+message(STATUS "  LTO                  : ${SHMBRIDGE_LTO}")
+message(STATUS "  Futex notify (Linux) : ${SHMBRIDGE_NOTIFY}")
+message(STATUS "=========================================================================")
+message(STATUS "")
+
 # ── shmbridge INTERFACE library ───────────────────────────────────────────────
 # Header-only: consumers link against shmbridge::shmbridge and get all include
 # paths, compile options, and preprocessor flags propagated automatically.
@@ -75,6 +85,11 @@ if(pybind11_FOUND)
         $<$<PLATFORM_ID:Linux>:rt>
     )
     install(TARGETS _core DESTINATION shmbridge)
+    message(STATUS "[shmbridge] pybind11 C++ extension '_core': ENABLED (will be built)")
+else()
+    message(STATUS "[shmbridge] pybind11 C++ extension '_core': SKIPPED "
+                    "(pybind11 not found — the pure-Python ctypes bridge in "
+                    "src/shmbridge/ is unaffected and fully functional)")
 endif()
 
 # ── C++ unit tests ────────────────────────────────────────────────────────────

@@ -30,7 +30,9 @@ def ensure_embree_sdk(embree_root_arg: str | None = None) -> Path | None:
         p = Path(candidate)
         if (p / "include" / "embree4" / "rtcore.h").exists():
             return p
-        print(f"[WARNING] EMBREE_ROOT set to {p} but include/embree4/rtcore.h not found.")
+        print(
+            f"[WARNING] EMBREE_ROOT set to {p} but include/embree4/rtcore.h not found."
+        )
 
     if (LOCAL_SDK / "include" / "embree4" / "rtcore.h").exists():
         return LOCAL_SDK
@@ -40,7 +42,9 @@ def ensure_embree_sdk(embree_root_arg: str | None = None) -> Path | None:
             if (sys_path / "include" / "embree4" / "rtcore.h").exists():
                 return sys_path
 
-    print("\n[INFO] Intel Embree 4 SDK not found. Downloading prebuilt release binaries...")
+    print(
+        "\n[INFO] Intel Embree 4 SDK not found. Downloading prebuilt release binaries..."
+    )
     if sys.platform == "win32":
         url = "https://github.com/RenderKit/embree/releases/download/v4.3.3/embree-4.3.3.x64.windows.zip"
     elif sys.platform == "darwin":
@@ -73,7 +77,9 @@ def ensure_embree_sdk(embree_root_arg: str | None = None) -> Path | None:
         else:
             extracted_dirs = list(temp_extract.glob("embree-*"))
             if not extracted_dirs:
-                print("[ERROR] Failed to find extracted embree folder.", file=sys.stderr)
+                print(
+                    "[ERROR] Failed to find extracted embree folder.", file=sys.stderr
+                )
                 return None
             if LOCAL_SDK.exists():
                 shutil.rmtree(LOCAL_SDK)
@@ -90,17 +96,28 @@ def ensure_embree_sdk(embree_root_arg: str | None = None) -> Path | None:
 class EmbreeBuildExt(build_ext):
     """Custom build_ext for lidar_embree using pybind11 & Embree 4."""
 
+    #: Populated by build_extension(); reported by the final summary in run().
+    embree_status: str = "not attempted"
+
     def build_extension(self, ext: Extension) -> None:
         if ext.name == "irsim_devices.lidar_embree":
             embree_root = ensure_embree_sdk()
             if not embree_root:
-                print("[WARNING] Skipping lidar_embree compilation (Embree SDK unavailable).", file=sys.stderr)
+                print(
+                    "[WARNING] Skipping lidar_embree compilation (Embree SDK unavailable).",
+                    file=sys.stderr,
+                )
+                self.embree_status = "skipped (Embree SDK unavailable)"
                 return
 
             try:
                 import pybind11
             except ImportError:
-                print("[WARNING] Skipping lidar_embree compilation (pybind11 missing).", file=sys.stderr)
+                print(
+                    "[WARNING] Skipping lidar_embree compilation (pybind11 missing).",
+                    file=sys.stderr,
+                )
+                self.embree_status = "skipped (pybind11 missing)"
                 return
 
             ext.include_dirs = [
@@ -118,13 +135,28 @@ class EmbreeBuildExt(build_ext):
             ext.libraries = ["embree4"]
 
             if sys.platform == "win32":
-                ext.extra_compile_args = ["/O2", "/arch:AVX2", "/std:c++17", "/D_USE_MATH_DEFINES"]
+                ext.extra_compile_args = [
+                    "/O2",
+                    "/arch:AVX2",
+                    "/std:c++17",
+                    "/D_USE_MATH_DEFINES",
+                ]
                 ext.extra_link_args = []
             elif sys.platform == "darwin":
-                ext.extra_compile_args = ["-O3", "-std=c++17", "-march=native", "-ffast-math"]
+                ext.extra_compile_args = [
+                    "-O3",
+                    "-std=c++17",
+                    "-march=native",
+                    "-ffast-math",
+                ]
                 ext.extra_link_args = [f"-Wl,-rpath,{embree_root}/lib"]
             else:
-                ext.extra_compile_args = ["-O3", "-std=c++17", "-march=native", "-ffast-math"]
+                ext.extra_compile_args = [
+                    "-O3",
+                    "-std=c++17",
+                    "-march=native",
+                    "-ffast-math",
+                ]
                 ext.extra_link_args = [f"-Wl,-rpath={embree_root}/lib"]
 
         try:
@@ -141,10 +173,69 @@ class EmbreeBuildExt(build_ext):
                             if dest.resolve() != dll.resolve():
                                 shutil.copy2(dll, dest)
                                 print(f"Copied {dll.name} -> {out_dir}")
+            if ext.name == "irsim_devices.lidar_embree":
+                self.embree_status = "built"
         except Exception as exc:
-            print(f"[WARNING] Optional extension {ext.name} failed to build: {exc}", file=sys.stderr)
+            print(
+                f"[WARNING] Optional extension {ext.name} failed to build: {exc}",
+                file=sys.stderr,
+            )
+            if ext.name == "irsim_devices.lidar_embree":
+                self.embree_status = f"FAILED ({exc})"
             if not getattr(ext, "optional", False):
                 raise
+
+    def run(self) -> None:
+        super().run()
+        _print_build_summary(self.embree_status)
+
+
+def _print_build_summary(embree_status: str) -> None:
+    """Verify and report what actually compiled, so silent fallbacks are visible.
+
+    Covers the C++/SIMD extensions this package can build or load, plus the
+    pure-Python fallbacks (NumPy, open3d) each one degrades to when a native
+    piece is unavailable.
+    """
+    sys.path.insert(0, str(HERE / "src"))
+
+    try:
+        from irsim_devices.core import ray_casting_2d_omp as _omp
+
+        _omp.ensure_built(verbose=False)
+        if _omp.is_avx2_f32_available():
+            omp_status = "AVX2 float32 8-wide SIMD (fastest)"
+        elif _omp.is_avx2_available():
+            omp_status = "AVX2 float64 4-wide SIMD"
+        elif _omp.is_omp_available():
+            omp_status = "scalar OpenMP (no AVX2)"
+        else:
+            omp_status = "unavailable -- falling back to pure NumPy"
+    except Exception as exc:
+        omp_status = f"could not probe ({exc})"
+
+    try:
+        import open3d  # noqa: F401
+
+        open3d_status = "available (Lidar3D can use the Embree-via-open3d backend)"
+    except ImportError:
+        open3d_status = "not installed (Lidar3D falls back to the native lidar_embree extension, if built)"
+
+    try:
+        import pybind11  # noqa: F401
+
+        pybind11_status = "available"
+    except ImportError:
+        pybind11_status = "not installed"
+
+    print("")
+    print("==================== irsim_devices build summary ====================")
+    print(f"  lidar_embree (C++/Embree4, pybind11) : {embree_status}")
+    print(f"  ray_casting_2d_omp (C/OpenMP/SIMD)    : {omp_status}")
+    print(f"  pybind11                              : {pybind11_status}")
+    print(f"  open3d                                : {open3d_status}")
+    print("=======================================================================")
+    print("")
 
 
 setup(

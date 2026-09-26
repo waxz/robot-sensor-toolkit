@@ -62,9 +62,20 @@ simulation framework that provides 2D Shapely geometry or an open3d
 
 ## C extensions
 
-Fast ray casting is provided by a C+OpenMP kernel (`csrc/ray_casting_omp.c`)
-and the IMU sub-stepping by `csrc/imu_c_ext.c`.  Both are optional
-accelerators; the package falls back to NumPy when they are absent.
+Three optional native accelerators exist; each falls back cleanly when
+unavailable:
+
+| Extension | Accelerates | Falls back to |
+|---|---|---|
+| `cpp/lidar_embree.cpp` (pybind11 + Embree4) | `sensors.EmbreeLidar2D` / `EmbreeLidar3D` ray casting | `open3d`-backed `Lidar2D`/`Lidar3D`, or pure Shapely |
+| `csrc/ray_casting_omp.c` (C + OpenMP + AVX2) | `core.ray_casting_2d_omp` — used by `Lidar2D`'s standalone-scene fast path | pure NumPy |
+
+`pip install -e .` (or `python setup.py build_ext`) prints a
+**build summary** at the end listing exactly what compiled — the
+`lidar_embree` status, which `ray_casting_2d_omp` kernel is active
+(AVX2 float32 / AVX2 float64 / scalar OpenMP / NumPy fallback), and
+whether `pybind11`/`open3d` are installed. Run with `pip install -v -e .`
+if you don't see it.
 
 ## Testing
 

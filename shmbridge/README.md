@@ -545,6 +545,12 @@ uv pip install -e .
 Requires: `scikit-build-core >= 0.8`, `pybind11 >= 2.12`, a C++17 compiler.
 The pure-Python ctypes fallback is used automatically if the C++ build fails.
 
+The CMake configure step prints a `shmbridge build configuration` block
+(compiler, SIMD/`-march=native`, LTO, futex-notify flags) followed by an
+explicit `ENABLED`/`SKIPPED` line for the optional pybind11 `_core`
+extension — check `pip install -v -e .` output if you need to confirm
+whether the native extension actually built.
+
 ### C++ header-only (copy-paste)
 
 ```bash

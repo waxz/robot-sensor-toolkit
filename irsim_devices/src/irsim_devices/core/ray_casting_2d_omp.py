@@ -201,7 +201,7 @@ def _load_lib() -> ctypes.CDLL | None:
     return None
 
 
-def build_omp_lib(force: bool = False) -> bool:
+def build_omp_lib(force: bool = False, verbose: bool = False) -> bool:
     """Build (or rebuild) the OpenMP shared library.
 
     Attempts to use the setuptools-compiled extension first.  If unavailable,
@@ -210,6 +210,10 @@ def build_omp_lib(force: bool = False) -> bool:
     Args:
         force: Recompile the legacy gcc artefact even if it already exists.
                Has no effect on the setuptools extension.
+        verbose: Print a one-line summary of which kernel(s) ended up
+            available (or the NumPy fallback).  Off by default so importing
+            this module in an application stays silent; ``setup.py`` passes
+            ``verbose=True`` to surface this in the build log.
 
     Returns:
         ``True`` if the library is available (pre-compiled or just built).
@@ -220,26 +224,38 @@ def build_omp_lib(force: bool = False) -> bool:
     if candidate is not None:
         _lib = candidate
         _OMP_AVAILABLE = True
-        return True
-    # Fall back to runtime gcc compile (Linux only; ignored on Windows/macOS)
-    ok = _try_build(force=force)
-    if ok:
-        _lib = _load_lib()
-        _OMP_AVAILABLE = _lib is not None
     else:
-        _OMP_AVAILABLE = False
-    if not _OMP_AVAILABLE:
-        global _AVX2_AVAILABLE, _F32_AVAILABLE
-        _AVX2_AVAILABLE = False
-        _F32_AVAILABLE = False
+        # Fall back to runtime gcc compile (Linux only; ignored on Windows/macOS)
+        ok = _try_build(force=force)
+        if ok:
+            _lib = _load_lib()
+            _OMP_AVAILABLE = _lib is not None
+        else:
+            _OMP_AVAILABLE = False
+        if not _OMP_AVAILABLE:
+            global _AVX2_AVAILABLE, _F32_AVAILABLE
+            _AVX2_AVAILABLE = False
+            _F32_AVAILABLE = False
+
+    if verbose:
+        if _F32_AVAILABLE:
+            kernel = "AVX2 float32 8-wide SIMD (fastest)"
+        elif _AVX2_AVAILABLE:
+            kernel = "AVX2 float64 4-wide SIMD"
+        elif _OMP_AVAILABLE:
+            kernel = "scalar OpenMP (no AVX2)"
+        else:
+            kernel = "none — falling back to pure NumPy (no C/OpenMP/SIMD)"
+        print(f"[irsim_devices] ray_casting_2d_omp kernel: {kernel}")
+
     return bool(_OMP_AVAILABLE)
 
 
-def ensure_built() -> bool:
+def ensure_built(verbose: bool = False) -> bool:
     """Build if not already done.  Returns availability."""
     global _OMP_AVAILABLE
     if _OMP_AVAILABLE is None:
-        build_omp_lib()
+        build_omp_lib(verbose=verbose)
     return bool(_OMP_AVAILABLE)
 
 
