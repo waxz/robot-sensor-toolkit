@@ -14,6 +14,7 @@ dependencies = [
     "numpy>=1.24",
     "matplotlib>=3.7",
     # shmbridge: install from ../shmbridge/ (local C++ extension, built separately)
+    # irsim_devices: install from ../irsim_devices/ (only needed by examples/04_pub_sensors.py)
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

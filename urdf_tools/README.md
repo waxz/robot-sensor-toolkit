@@ -40,7 +40,7 @@ sophistication:
 | Script | Shows |
 |--------|-------|
 | `01_view_2d.py` / `02_view_3d.py` / `03_kinematic_tree.py` | Direct use of `urdf_tools.viz` without the CLI |
-| `04_pub_sensors.py` | Publishing a synthetic scan over shmbridge |
+| `04_pub_sensors.py` | Publishing a fully synthetic 2D+3D LiDAR, IMU, encoder, and odometry stream over shmbridge, using `irsim_devices`' standalone sensor/actuator models — no external simulator or URDF world needed |
 | `05_sub_viewer.py` | Subscribing and rendering (matplotlib 2D/3D, or a three.js web viewer via `--live3d`) |
 
 ## License
