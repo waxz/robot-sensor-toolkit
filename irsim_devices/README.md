@@ -24,6 +24,10 @@ pip install "irsim-devices[lidar3d]" # adds 3D LiDAR (open3d)
 pip install "irsim-devices[all]"     # everything
 ```
 
+A plain install never downloads anything beyond PyPI wheels — the optional
+`lidar_embree` C++ extension's ~35 MB Embree4 SDK is fetched only when you
+explicitly opt in (see [C extensions](#c-extensions) below).
+
 ## Quick start
 
 ```python
@@ -69,6 +73,16 @@ unavailable:
 |---|---|---|
 | `cpp/lidar_embree.cpp` (pybind11 + Embree4) | `sensors.EmbreeLidar2D` / `EmbreeLidar3D` ray casting | `open3d`-backed `Lidar2D`/`Lidar3D`, or pure Shapely |
 | `csrc/ray_casting_omp.c` (C + OpenMP + AVX2) | `core.ray_casting_2d_omp` — used by `Lidar2D`'s standalone-scene fast path | pure NumPy |
+
+`lidar_embree` needs the Embree4 SDK (~35 MB), which is **not** downloaded by
+a plain install — `pip install -e .` finishes in ~1 second and simply skips
+that extension. Opt in explicitly to build it:
+
+```bash
+IRSIM_DEVICES_BUILD_EMBREE=1 pip install -e ".[embree]"
+# or, with an Embree4 SDK already installed locally:
+EMBREE_ROOT=/path/to/embree4 pip install -e ".[embree]"
+```
 
 `pip install -e .` (or `python setup.py build_ext`) prints a
 **build summary** at the end listing exactly what compiled — the

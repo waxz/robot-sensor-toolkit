@@ -1,8 +1,15 @@
 """Build script for irsim_devices C++ extensions (lidar_embree).
 
 Compiles ``lidar_embree.cpp`` using pybind11 and Intel Embree4 SDK without requiring CMake.
-If Embree4 SDK is missing, it is automatically downloaded and unpacked locally into ``cpp/embree-sdk``.
-The extension is optional: if Embree4 cannot be downloaded or compiled, setup completes cleanly.
+The extension is optional and, by default, its ~35 MB SDK is NEVER downloaded
+automatically -- a plain ``pip install -e .`` stays fast. Opt in with one of:
+
+    IRSIM_DEVICES_BUILD_EMBREE=1 pip install -e ".[embree]"
+    EMBREE_ROOT=/path/to/embree4 pip install -e ".[embree]"
+
+If the SDK is already cached locally (``cpp/embree-sdk``, from a previous
+opted-in build) it is reused automatically without re-downloading.
+If Embree4 cannot be found/downloaded/compiled, setup completes cleanly.
 """
 
 from __future__ import annotations
@@ -11,6 +18,7 @@ import io
 import os
 import shutil
 import sys
+import time
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -22,16 +30,23 @@ HERE = Path(__file__).resolve().parent
 CPP_DIR = HERE / "cpp"
 LOCAL_SDK = CPP_DIR / "embree-sdk"
 
+# Network download is opt-in: a bare `pip install -e .` must stay fast and
+# never block on a ~35 MB fetch nobody asked for. Local caches / EMBREE_ROOT
+# are still honoured unconditionally since they cost nothing to check.
+_DOWNLOAD_OPT_IN = os.environ.get("IRSIM_DEVICES_BUILD_EMBREE") == "1"
+_DOWNLOAD_TIMEOUT_S = 30
 
-def ensure_embree_sdk(embree_root_arg: str | None = None) -> Path | None:
-    """Locate or download Intel Embree 4 SDK."""
+
+def _find_local_embree_sdk(embree_root_arg: str | None = None) -> Path | None:
+    """Locate an already-available Embree 4 SDK (no network access)."""
     candidate = embree_root_arg or os.environ.get("EMBREE_ROOT")
     if candidate:
         p = Path(candidate)
         if (p / "include" / "embree4" / "rtcore.h").exists():
             return p
         print(
-            f"[WARNING] EMBREE_ROOT set to {p} but include/embree4/rtcore.h not found."
+            f"[WARNING] EMBREE_ROOT set to {p} but include/embree4/rtcore.h not found.",
+            flush=True,
         )
 
     if (LOCAL_SDK / "include" / "embree4" / "rtcore.h").exists():
@@ -42,9 +57,11 @@ def ensure_embree_sdk(embree_root_arg: str | None = None) -> Path | None:
             if (sys_path / "include" / "embree4" / "rtcore.h").exists():
                 return sys_path
 
-    print(
-        "\n[INFO] Intel Embree 4 SDK not found. Downloading prebuilt release binaries..."
-    )
+    return None
+
+
+def _download_embree_sdk() -> Path | None:
+    """Download and unpack the Embree 4 SDK. Network access; opt-in only."""
     if sys.platform == "win32":
         url = "https://github.com/RenderKit/embree/releases/download/v4.3.3/embree-4.3.3.x64.windows.zip"
     elif sys.platform == "darwin":
@@ -53,9 +70,25 @@ def ensure_embree_sdk(embree_root_arg: str | None = None) -> Path | None:
         url = "https://github.com/RenderKit/embree/releases/download/v4.3.3/embree-4.3.3.x86_64.linux.tar.gz"
 
     try:
-        print(f"Downloading {url} ...")
-        req = urllib.request.urlopen(url)
-        data = req.read()
+        print(f"[irsim_devices] Downloading Embree 4 SDK from {url} ...", flush=True)
+        t0 = time.monotonic()
+        req = urllib.request.urlopen(url, timeout=_DOWNLOAD_TIMEOUT_S)
+        total = req.length or 0
+        chunks: list[bytes] = []
+        read = 0
+        while True:
+            chunk = req.read(1 << 20)  # 1 MiB per read -- keeps stdout live
+            if not chunk:
+                break
+            chunks.append(chunk)
+            read += len(chunk)
+            pct = f"{100 * read // total}%" if total else f"{read // 1_000_000}MB"
+            print(f"  ... {pct} ({read // 1_000_000} MB)", flush=True)
+        data = b"".join(chunks)
+        print(
+            f"[irsim_devices] Download complete in {time.monotonic() - t0:.1f}s",
+            flush=True,
+        )
 
         temp_extract = CPP_DIR / "temp_embree"
         if temp_extract.exists():
@@ -78,7 +111,9 @@ def ensure_embree_sdk(embree_root_arg: str | None = None) -> Path | None:
             extracted_dirs = list(temp_extract.glob("embree-*"))
             if not extracted_dirs:
                 print(
-                    "[ERROR] Failed to find extracted embree folder.", file=sys.stderr
+                    "[ERROR] Failed to find extracted embree folder.",
+                    file=sys.stderr,
+                    flush=True,
                 )
                 return None
             if LOCAL_SDK.exists():
@@ -86,11 +121,44 @@ def ensure_embree_sdk(embree_root_arg: str | None = None) -> Path | None:
             extracted_dirs[0].rename(LOCAL_SDK)
             shutil.rmtree(temp_extract, ignore_errors=True)
 
-        print(f"[SUCCESS] Embree 4 SDK downloaded and unpacked to: {LOCAL_SDK}")
+        print(
+            f"[SUCCESS] Embree 4 SDK downloaded and unpacked to: {LOCAL_SDK}",
+            flush=True,
+        )
         return LOCAL_SDK
-    except Exception as exc:
-        print(f"[ERROR] Failed to download Embree 4 SDK: {exc}", file=sys.stderr)
+    except (TimeoutError, OSError) as exc:
+        print(
+            f"[ERROR] Failed to download Embree 4 SDK ({exc}). "
+            "Set EMBREE_ROOT to a local install to skip the download.",
+            file=sys.stderr,
+            flush=True,
+        )
         return None
+
+
+def ensure_embree_sdk(embree_root_arg: str | None = None) -> Path | None:
+    """Locate the Embree 4 SDK, downloading it only if explicitly opted in.
+
+    A local cache (``cpp/embree-sdk``) or ``EMBREE_ROOT`` is always honoured
+    since checking for those is instant. A fresh network download only
+    happens when ``IRSIM_DEVICES_BUILD_EMBREE=1`` is set -- otherwise this
+    returns ``None`` immediately so a plain ``pip install -e .`` never
+    blocks on it.
+    """
+    found = _find_local_embree_sdk(embree_root_arg)
+    if found is not None:
+        return found
+
+    if not _DOWNLOAD_OPT_IN:
+        print(
+            "[irsim_devices] Embree 4 SDK not found locally; skipping the optional "
+            "lidar_embree extension (core package is unaffected). Set "
+            "IRSIM_DEVICES_BUILD_EMBREE=1 to download it (~35 MB) and build it.",
+            flush=True,
+        )
+        return None
+
+    return _download_embree_sdk()
 
 
 class EmbreeBuildExt(build_ext):
