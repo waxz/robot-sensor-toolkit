@@ -14,7 +14,8 @@ dependencies = [
     "numpy>=1.24",
     "matplotlib>=3.7",
     # shmbridge: install from ../shmbridge/ (local C++ extension, built separately)
-    # irsim_devices: install from ../irsim_devices/ (only needed by examples/04_pub_sensors.py)
+    # irsim_devices[urdf]: install from ../irsim_devices/ (only needed by examples/04_pub_sensors.py)
+    # open3d: pip install open3d (only if irsim_devices' Embree extension wasn't built)
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

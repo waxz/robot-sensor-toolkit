@@ -33,8 +33,9 @@ sys.path.insert(0, MODEL_DIR)
 sys.path.insert(0, os.path.join(PKG_DIR, "src"))
 
 import lidar_embree as _le  # noqa: E402
-from urdf_loader import describe_urdf, load_urdf  # noqa: E402
 from warehouse_model import build_warehouse  # noqa: E402
+
+from irsim_devices.models.urdf_loader import describe_urdf, load_urdf  # noqa: E402
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 OX, OY = 12.0, 15.0

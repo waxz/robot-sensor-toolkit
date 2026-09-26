@@ -1,6 +1,8 @@
 """Lightweight 2-D geometry utilities used by the sensor modules.
 
-Dependency-free (only numpy + shapely).
+Only :func:`geometry_transform` needs shapely, and imports it lazily inside
+the function body -- everything else here is numpy-only, so importing this
+module never pulls shapely in unless that one function is actually called.
 """
 
 from __future__ import annotations
@@ -9,7 +11,6 @@ from math import pi
 from typing import Any
 
 import numpy as np
-import shapely
 
 
 def ClipTo2Pi(rad: float) -> float:  # noqa: N802
@@ -28,6 +29,8 @@ def geometry_transform(geometry: Any, state: np.ndarray) -> Any:
 
     Rotates by θ then translates by (x, y).
     """
+    import shapely
+
     values = np.asarray(state, dtype=float).reshape(-1)
     x, y = values[0], values[1]
     theta = values[2] if values.size >= 3 else 0.0

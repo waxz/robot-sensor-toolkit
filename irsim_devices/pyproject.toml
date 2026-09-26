@@ -23,8 +23,9 @@ lidar2d = ["shapely>=2.1.2", "matplotlib"]
 lidar3d = ["open3d"]
 open3d_scene = ["open3d", "shapely>=2.1.2"]
 embree = ["pybind11>=2.12"]                        # native ext (lidar_embree.*.so)
-all = ["shapely>=2.1.2", "matplotlib", "open3d", "pybind11>=2.12"]
-dev = ["pytest", "numpy", "shapely>=2.1.2"]
+urdf = ["trimesh>=4.0"]                            # irsim_devices.models: URDF -> triangle mesh
+all = ["shapely>=2.1.2", "matplotlib", "open3d", "pybind11>=2.12", "trimesh>=4.0"]
+dev = ["pytest", "numpy", "shapely>=2.1.2", "trimesh>=4.0"]
 
 [project.urls]
 Repository = "https://github.com/<your-org>/robot-sensor-toolkit"

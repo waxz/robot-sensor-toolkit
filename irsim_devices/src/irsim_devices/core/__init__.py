@@ -1,4 +1,9 @@
-"""Core utilities: world-model protocols, geometry helpers, RNG, ray-casting."""
+"""Core utilities: world-model protocols, geometry helpers, RNG, ray-casting.
+
+``Open3DScene2D`` is loaded lazily (PEP 562 ``__getattr__``): it pulls in
+``shapely``, which nothing else in this module needs. Importing e.g.
+``irsim_devices.core.rng`` must not pay for that.
+"""
 
 from irsim_devices.core.geo_utils import (
     ClipTo2Pi,
@@ -19,7 +24,13 @@ __all__ = [
     "transform_point_with_state",
 ]
 
-try:
-    from irsim_devices.core.open3d_scene_2d import Open3DScene2D
-except ImportError:
-    pass
+
+def __getattr__(name: str):
+    if name == "Open3DScene2D":
+        import importlib
+
+        module = importlib.import_module("irsim_devices.core.open3d_scene_2d")
+        value = module.Open3DScene2D
+        globals()[name] = value  # cache: subsequent access skips __getattr__
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
