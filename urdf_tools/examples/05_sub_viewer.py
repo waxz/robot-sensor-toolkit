@@ -1,6 +1,6 @@
 """Example 05 — Subscribe to sensor topics: real-time 2D and 3D LiDAR viewers.
 
-Requires shmbridge installed and 06_irsim_bridge.py (or 04_pub_sensors.py) running.
+Requires shmbridge installed and 04_pub_sensors.py running.
 
 Usage:
     python 05_sub_viewer.py                     # text print mode
@@ -452,7 +452,7 @@ es.onmessage = ({ data }) => {
     '<span class="dim">' + curFps + ' fps · drag:orbit  scroll:zoom  R:reset</span>';
 };
 es.onerror = () => {
-  hud.innerHTML = '<span style="color:#ef4444">Stream lost — is 06_irsim_bridge.py running?</span>';
+  hud.innerHTML = '<span style="color:#ef4444">Stream lost — is 04_pub_sensors.py running?</span>';
 };
 
 // ── render loop ───────────────────────────────────────────────────────────────

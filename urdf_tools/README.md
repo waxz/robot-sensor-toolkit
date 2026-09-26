@@ -12,7 +12,6 @@ no simulator framework required.
 | `urdf_tools.geometry` | Transform utilities and primitive wireframe generators (box/cylinder/sphere) |
 | `urdf_tools.viz` | 2D floor plan, 3D wireframe, and kinematic-tree plotting (matplotlib) |
 | `urdf_tools.pubsub` | `SensorPublisher`/`SensorSubscriber` — scan/IMU/odometry/encoder over [shmbridge](../shmbridge) shared memory |
-| `urdf_tools.irsim_compat` | Optional compatibility shim: convert URDF geometry into [ir-sim](https://github.com/hanruihua/ir-sim) obstacles or an `irsim_devices` 2D scene |
 
 ## Install
 
@@ -43,7 +42,6 @@ sophistication:
 | `01_view_2d.py` / `02_view_3d.py` / `03_kinematic_tree.py` | Direct use of `urdf_tools.viz` without the CLI |
 | `04_pub_sensors.py` | Publishing a synthetic scan over shmbridge |
 | `05_sub_viewer.py` | Subscribing and rendering (matplotlib 2D/3D, or a three.js web viewer via `--live3d`) |
-| `06_irsim_bridge.py` | **Optional**: bridges a real [ir-sim](https://github.com/hanruihua/ir-sim) simulation (LiDAR, IMU, encoder, motor state) to shmbridge — requires `pip install ir-sim` separately; not a hard dependency of this package |
 
 ## License
 
