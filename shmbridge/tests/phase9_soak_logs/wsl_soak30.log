@@ -1,0 +1,37 @@
+soak_test: duration=1800s capacity=1024 n_consumers=4
+soak_test: 1min elapsed, 2227859 messages pushed so far
+soak_test: 2min elapsed, 4630006 messages pushed so far
+soak_test: 3min elapsed, 7225271 messages pushed so far
+soak_test: 4min elapsed, 9600586 messages pushed so far
+soak_test: 5min elapsed, 11920694 messages pushed so far
+soak_test: 6min elapsed, 14429244 messages pushed so far
+soak_test: 7min elapsed, 17080574 messages pushed so far
+soak_test: 8min elapsed, 19865370 messages pushed so far
+soak_test: 9min elapsed, 22409247 messages pushed so far
+soak_test: 10min elapsed, 24844695 messages pushed so far
+soak_test: 11min elapsed, 27277202 messages pushed so far
+soak_test: 12min elapsed, 29649182 messages pushed so far
+soak_test: 13min elapsed, 32088025 messages pushed so far
+soak_test: 14min elapsed, 34349430 messages pushed so far
+soak_test: 15min elapsed, 36716116 messages pushed so far
+soak_test: 16min elapsed, 38950555 messages pushed so far
+soak_test: 17min elapsed, 41248896 messages pushed so far
+soak_test: 18min elapsed, 43645125 messages pushed so far
+soak_test: 19min elapsed, 45982299 messages pushed so far
+soak_test: 20min elapsed, 48409550 messages pushed so far
+soak_test: 21min elapsed, 50876259 messages pushed so far
+soak_test: 22min elapsed, 53181315 messages pushed so far
+soak_test: 23min elapsed, 55481088 messages pushed so far
+soak_test: 24min elapsed, 57834205 messages pushed so far
+soak_test: 25min elapsed, 60564249 messages pushed so far
+soak_test: 26min elapsed, 62864603 messages pushed so far
+soak_test: 27min elapsed, 65275050 messages pushed so far
+soak_test: 28min elapsed, 67657947 messages pushed so far
+soak_test: 29min elapsed, 69977137 messages pushed so far
+soak_test: 30min elapsed, 72414116 messages pushed so far
+soak_test: producer done, 72414116 messages pushed, waiting for consumers...
+soak_test: consumer[0] (poll=1ms) exit=1 output: received=72207953 violations=5 last_seq=72414115
+soak_test: consumer[1] (poll=5ms) exit=1 output: received=72218526 violations=2 last_seq=72414115
+soak_test: consumer[2] (poll=20ms) exit=1 output: received=72211032 violations=2 last_seq=72414115
+soak_test: consumer[3] (poll=100ms) exit=1 output: received=72220756 violations=2 last_seq=72414115
+SOAK FAIL

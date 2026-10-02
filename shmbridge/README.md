@@ -1,7 +1,8 @@
 # shmbridge
 
-POSIX shared-memory publish/subscribe for Python ↔ C++ robot control —
-sub-microsecond write/read, zero copies in the critical path.
+Cross-platform (Linux/WSL and native Windows) shared-memory publish/
+subscribe for Python ↔ C++ robot control — sub-microsecond write/read,
+zero copies in the critical path.
 
 ---
 
@@ -11,7 +12,7 @@ sub-microsecond write/read, zero copies in the critical path.
 - [Quick start — C++ Node API](#quick-start--c-node-api)
 - [Quick start — Python](#quick-start--python)
 - [C++ Node API (v3)](#c-node-api-v3)
-- [Python / Robot Bridge API (v2)](#python--robot-bridge-api-v2)
+- [Python / Robot Bridge API (v2)](#python--robot-bridge-api-v2): [generic messages](#generic-messages-shmbridgemessage--ros-style-any-message-type) · [`ExtShmBridge`](#extshmbridge--one-segment-many-channels)
 - [Transport internals](#transport-internals)
 - [Performance](#performance)
 - [Build](#build)
@@ -401,6 +402,76 @@ ShmSubscriber(name="/shmbridge_v2", n_robots=1)
 | `angular` | float32 | Angular velocity (rad/s, CCW+) |
 | `seq` | uint32 | Monotone command counter |
 
+### Generic messages (`shmbridge.message`) — ROS-style, any message type
+
+For anything beyond the fixed `RobotState`/`RobotCmd` pair, define a message
+as a small dataclass instead of writing a new publisher/subscriber class —
+the message type is an argument, the way `rospy.Publisher(topic, MsgType)`
+takes one:
+
+```python
+from dataclasses import dataclass
+from shmbridge.message import Message, Publisher, Subscriber
+
+@dataclass
+class BatteryState(Message):
+    _format = "<ffB"  # struct format: voltage(f), current(f), charging(B)
+    voltage: float = 0.0
+    current: float = 0.0
+    charging: bool = False
+
+pub = Publisher("battery", BatteryState)
+pub.open()
+pub.publish(BatteryState(voltage=12.1, current=0.4, charging=True))
+
+sub = Subscriber("battery", BatteryState)
+msg = sub.read()  # BatteryState | None — attaches lazily on first call
+```
+
+Each `Publisher`/`Subscriber` pair owns its own shm segment (named after the
+topic string), so a completely separate process can publish — or subscribe
+to — just that one message, the same independent-per-topic model
+`examples/cpp_pipeline`'s separate node executables use for state/cmd.
+Packed size is capped at 88 bytes (`USER_CHANNEL_PAYLOAD_BYTES`); split a
+larger message into multiple topics. Backed by `shmbridge._core`'s compiled
+`RawChannelPublisher`/`RawChannelSubscriber` (`Publisher<RawMsg88>`/
+`Subscriber<RawMsg88>` from `topic.hpp`).
+
+### `ExtShmBridge` — one segment, many channels
+
+For a single process that owns several sensor channels at once (a
+monolithic simulator, for example) rather than one segment per topic,
+`ExtShmBridge` bundles state, cmd, IMU, a 4-wheel encoder, a point cloud,
+and a pool of named generic channels into one segment:
+
+```python
+from shmbridge import ExtShmBridge
+
+bridge = ExtShmBridge("/my_robot")   # whichever side calls open() creates it
+bridge.open()
+bridge.write_state(x=1.0, y=2.0, heading=0.0, vx=0.1, vy=0.0,
+                    omega=0.0, goal_x=5.0, goal_y=5.0, goal_dist=3.0,
+                    step=1, sim_time=0.1)
+bridge.write_imu(ax=0, ay=0, az=9.8, gx=0, gy=0, gz=0)
+bridge.write_channel("battery", BatteryState(12.1, 0.4, True).pack())
+print(bridge.list_topics())  # liveness + age for every channel at once
+```
+
+| Method | Description |
+|---|---|
+| `write_state(x, y, heading, vx, vy, omega, goal_x, goal_y, goal_dist, step, sim_time, reached=False, collision=False)` / `read_state()` | Same seqlock pair as `ShmPublisher`/`ShmSubscriber`, in this combined segment. |
+| `write_cmd(linear, angular)` / `read_cmd()` | Velocity command. |
+| `write_imu(ax, ay, az, gx, gy, gz, mx=0, my=0, mz=0, ts=0)` / `read_imu()` | IMU sample. |
+| `write_encoder(ticks, speeds, ts=0)` / `read_encoder()` | 4-wheel encoder sample. |
+| `write_pointcloud(points, ts=0)` / `read_pointcloud_bytes()` | Any buffer-protocol float32 array (numpy, memoryview, ...) of `[x,y,z,intensity]` points, up to `EXT_PC_MAX_POINTS`. |
+| `write_channel(name, data)` / `read_channel(name)` | Raw-bytes named channel (up to 8 distinct names per segment); pair with `shmbridge.message.Message.pack`/`unpack` for structured payloads. |
+| `is_imu_alive(max_age_ms)`, `is_pointcloud_alive(max_age_ms)` | Heartbeat checks. |
+| `list_topics(max_age_ms=300)` | Every channel (state/cmd/imu/encoder/pointcloud + claimed user channels) with liveness and age. |
+
+Use `ExtShmBridge` when channels naturally belong to one owning process and
+you want them in one segment; use `shmbridge.message.Publisher`/`Subscriber`
+when each channel should be independently publishable from its own process.
+
 ---
 
 ## Transport internals
@@ -534,22 +605,28 @@ end-to-end).
 
 ## Build
 
-### Python package (with C++ extension)
+### Python package (requires the C++ extension)
 
 ```bash
 pip install -e .
 # or:
 uv pip install -e .
+# or
+uv build
 ```
 
 Requires: `scikit-build-core >= 0.8`, `pybind11 >= 2.12`, a C++17 compiler.
-The pure-Python ctypes fallback is used automatically if the C++ build fails.
+The Python API (`import shmbridge`) is a thin wrapper around the compiled
+`shmbridge._core` extension — there is no pure-Python fallback, so a C++17
+compiler and pybind11 are mandatory, not optional, for installing this
+package. `import shmbridge` raises a clear `ImportError` naming the missing
+piece if `_core` failed to build.
 
 The CMake configure step prints a `shmbridge build configuration` block
 (compiler, SIMD/`-march=native`, LTO, futex-notify flags) followed by an
-explicit `ENABLED`/`SKIPPED` line for the optional pybind11 `_core`
-extension — check `pip install -v -e .` output if you need to confirm
-whether the native extension actually built.
+explicit `ENABLED`/`SKIPPED` line for the pybind11 `_core` extension — check
+`pip install -v -e .` output if the install succeeds but `import shmbridge`
+doesn't.
 
 ### C++ header-only (copy-paste)
 
@@ -561,8 +638,10 @@ cp -r include/shmbridge  path/to/myproject/include/
 target_include_directories(my_node PRIVATE path/to/myproject/include)
 ```
 
-No library to link. The headers pull in only C++17 standard library and
-POSIX (`shm_open`, `mmap`, `futex`).
+No library to link. The headers are C++17, cross-platform — Linux/macOS
+via POSIX (`shm_open`, `mmap`, `futex`), Windows via `CreateFileMapping`/
+`MapViewOfFile`/`WaitOnAddress` (`shmbridge/platform.hpp` abstracts the
+difference; nothing in application code needs to branch on OS).
 
 ### C++ standalone (CMake FetchContent)
 
@@ -580,19 +659,94 @@ target_link_libraries(my_node PRIVATE shmbridge::shmbridge)
 
 ### C++ tests and benchmarks
 
+Verified on both platforms this project actually targets: native Windows
+(Visual Studio 2026/MSVC — this project's Windows toolchain; MinGW has no
+sanitizer runtime and isn't used for verification) and WSL/Linux (GCC).
+Neither ships GTest preinstalled, so both sequences below build it once
+into a local prefix first — skip that step if `find_package(GTest)`
+already resolves on your system.
+
+**WSL / Linux:**
+
 ```bash
-cmake -B build \
-    -DSHMBRIDGE_BUILD_TESTS=ON \
-    -DSHMBRIDGE_BUILD_BENCH=ON
-cmake --build build -j4
+# One-time: a local GTest build
+git clone --depth 1 --branch v1.14.0 https://github.com/google/googletest.git
+cmake -S googletest -B gtest_build -DCMAKE_BUILD_TYPE=Release
+cmake --build gtest_build -j"$(nproc)"
+cmake --install gtest_build --prefix gtest_install
+
+# shmbridge itself
+cmake -S shmbridge -B build -DCMAKE_BUILD_TYPE=Release -DSHMBRIDGE_BUILD_TESTS=ON -DSHMBRIDGE_BUILD_BENCH=ON -DGTEST_ROOT=gtest_install -DCMAKE_PREFIX_PATH=gtest_install
+cmake --build build -j"$(nproc)"
 
 # Tests
-./build/test_topic
-./build/test_migration
+./build/test_ring         # ring.hpp — platform-independent, 34 cases
+./build/test_migration    # node.hpp/registry.hpp/ring.hpp integration, 36 cases
+./build/test_topic        # topic.hpp seqlock, platform-independent, 22 cases
 
 # Benchmarks (write JSON to stdout / bench_realistic.json)
 ./build/bench_migration | python -m json.tool
 ./build/bench_realistic
+
+# Optional: the 30-minute multi-process soak test (design_ring_zero_
+# copy.md §11.2) — not run by ctest, a manual validation tool
+cmake -S shmbridge -B build -DSHMBRIDGE_BUILD_SOAK_TEST=ON
+cmake --build build -j"$(nproc)"
+./build/soak_test 1800 1024 4
+```
+
+**Windows / Visual Studio 2026:**
+
+Run these from a plain PowerShell window — **not** a "Developer PowerShell
+for VS" — and **without** `-G Ninja`. CMake's default generator on Windows
+is the installed Visual Studio generator, which locates `cl.exe` itself
+(via the same mechanism as `vswhere`) regardless of which shell launched
+it; it's a multi-config generator, so `CMAKE_BUILD_TYPE` has no effect and
+`--build`/`--install` take `--config` instead. `-G Ninja` requires two
+things the default generator doesn't: `ninja.exe` actually installed and
+on `PATH`, *and* a shell that already has `cl.exe`/the MSVC environment
+variables set up (a plain PowerShell has neither, which is exactly the
+`CMake Error: CMake was unable to find a build program corresponding to
+"Ninja"` / `CMAKE_CXX_COMPILER not set` pair you get from running the
+Ninja-generator command in an ordinary shell). Pass `-G Ninja` only if
+Ninja is installed and you're intentionally running inside a Developer
+Command Prompt/PowerShell for faster incremental builds; the commands
+below don't need it.
+
+```powershell
+# One-time: a local GTest build (static CRT — must match shmbridge's own
+# -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded below, or linking fails with
+# LNK2038 RuntimeLibrary mismatches)
+git clone --depth 1 --branch v1.14.0 https://github.com/google/googletest.git
+cmake -S googletest -B gtest_build
+cmake --build gtest_build --config Release
+cmake --install gtest_build --prefix gtest_install --config Release
+
+# shmbridge itself. CMAKE_PREFIX_PATH MUST be an absolute path here --
+# "-DCMAKE_PREFIX_PATH=gtest_install" (relative) silently fails find_package's
+# config-mode search on Windows and falls through to FindGTest.cmake's legacy
+# variable search, which then errors "Could NOT find GTest (missing:
+# GTEST_LIBRARY GTEST_INCLUDE_DIR GTEST_MAIN_LIBRARY)" even though the
+# install above succeeded. $PWD expands to an absolute path and sidesteps
+# this; GTEST_ROOT is not needed (and is silently ignored with a policy
+# CMP0144 warning when GTest is found via its CMake package, as it is here).
+cmake -S shmbridge -B build `
+    -DSHMBRIDGE_BUILD_TESTS=ON `
+    -DCMAKE_PREFIX_PATH="$PWD\gtest_install" -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+cmake --build build --config Release
+
+# Tests
+.\build\Release\test_ring.exe
+.\build\Release\test_migration.exe
+.\build\Release\test_topic.exe
+
+# Benchmarks / soak test: pass -DSHMBRIDGE_BUILD_BENCH=ON /
+# -DSHMBRIDGE_BUILD_SOAK_TEST=ON to the shmbridge configure above, same
+# targets as the WSL/Linux block (bench_migration, bench_realistic,
+# soak_test are all cross-platform). test_core is the one target that
+# stays Unix-only (a separate, not-yet-ported module; see CMakeLists.txt).
+# Built executables land in build\Release\ (or build\<config>\ generally)
+# with this generator, not directly under build\ as on WSL/Linux.
 ```
 
 ---
@@ -603,6 +757,7 @@ cmake --build build -j4
 |---|---|---|
 | `examples/cpp_node/talker.cpp` | C++ | Publishes `Pose2d` at 100 Hz using Node API |
 | `examples/cpp_node/listener.cpp` | C++ | Receives via `MessageQueue`; prints age |
+| `examples/cpp_ring_features/ring_features_demo.cpp` | C++ | Single-process tour of every `ring.hpp` feature (F-1–F-14): zero-copy write/read, `pop_latest()`, freshness checks, TOML config resolution, resilient attach, type safety, producer-conflict detection, torn-read-retry stats, point clouds |
 | `examples/python_node_demo.py` | Python | In-process publisher + proportional controller |
 | `examples/python_writer.py` | Python | Publishes fake robot state at 100 Hz (v2 API) |
 | `examples/cpp_controller/controller.cpp` | C++ | Heading controller reading from Python sim (v2 API) |

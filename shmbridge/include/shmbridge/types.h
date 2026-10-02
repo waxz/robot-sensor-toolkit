@@ -83,13 +83,28 @@ typedef struct {
 } ShmCmdSlot; /* sizeof == 128 */
 
 /* ── Shared-memory header (128 bytes) ──────────────────────────────────── */
+/*
+ * ext_schema_version (offset 20) versions ONLY the extended block's own
+ * layout (see ext_core.hpp's ShmExtBlock) -- independent of schema_version
+ * above, which is the base state/cmd protocol every ShmBridge/ShmPublisher/
+ * ShmSubscriber segment uses. A plain base segment never sets it (stays 0,
+ * ignored). It's carved out of what used to be _fill padding (offsets
+ * 18-127 were always zero before), so ready/magic/schema_version/n_robots/
+ * n_consumers keep their exact original offsets -- a pre-existing base-only
+ * reader that has never heard of ext_schema_version silently ignores it,
+ * same as it always ignored this padding. (2 bytes of implicit compiler
+ * padding sit between n_consumers at offset 17 and this uint32_t, placing
+ * it at offset 20 to keep it 4-byte aligned -- verified byte-for-byte
+ * identical to _types.py's ctypes _ShmHeader.)
+ */
 typedef struct {
     volatile uint64_t ready;         /* offset  0  1 = initialized (v1 compat) */
     uint32_t          magic;         /* offset  8  SHMBRIDGE_MAGIC             */
     uint32_t          schema_version;/* offset 12  SHMBRIDGE_VERSION           */
     uint8_t           n_robots;      /* offset 16  number of robot slots       */
     uint8_t           n_consumers;   /* offset 17  cmd writers per robot (NEW) */
-    uint8_t           _fill[110];    /* offset 18  pad to 128                  */
+    uint32_t          ext_schema_version; /* offset 20  see comment above (NEW) */
+    uint8_t           _fill[104];    /* offset 24  pad to 128                  */
 } ShmHeader; /* sizeof == 128 */
 
 /* Single-robot, single-consumer convenience block. */

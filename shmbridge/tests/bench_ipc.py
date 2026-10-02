@@ -37,6 +37,18 @@ except ImportError:
 
 from shmbridge import RobotState, ShmPublisher, ShmSubscriber
 
+# ── raw libc for benchmark E's plain-mmap baseline (not shmbridge's own
+# transport -- standalone comparison point, so it doesn't go through
+# shmbridge._core) ──────────────────────────────────────────────────────────
+import ctypes
+
+_libc = ctypes.CDLL("libc.so.6", use_errno=True)
+_libc.shm_open.restype = ctypes.c_int
+_libc.shm_open.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_uint]
+_libc.shm_unlink.restype = ctypes.c_int
+_libc.ftruncate.restype = ctypes.c_int
+_libc.close.restype = ctypes.c_int
+
 # Sentinel step value: large uint64 that signals "done"
 _DONE_STEP: int = 2**32 - 1  # 0xFFFFFFFF — fits in uint32 and uint64
 
@@ -443,8 +455,7 @@ def _atomic_publisher(shm_name: str, ready_ev: mp.Event,
                       result_q: mp.Queue, n_iter: int, cpu: int) -> None:
     """Write a sequence of uint64 values into the mmap."""
     _pin_cpu(cpu)
-    from shmbridge._libc import _libc
-    from shmbridge._platform import O_CREAT, O_EXCL, O_RDWR
+    O_CREAT, O_EXCL, O_RDWR = 0o100, 0o200, 0o2
 
     name_b = shm_name.encode()
     _libc.shm_unlink(name_b)
@@ -481,8 +492,7 @@ def _atomic_subscriber(shm_name: str, ready_ev: mp.Event,
                        result_q: mp.Queue, n_iter: int, cpu: int) -> None:
     """Spin-detect uint64 changes and record detection timestamps."""
     _pin_cpu(cpu)
-    from shmbridge._libc import _libc
-    from shmbridge._platform import O_RDWR
+    O_RDWR = 0o2
 
     ready_ev.wait(timeout=5.0)
     time.sleep(0.02)  # wait for publisher to open
@@ -675,7 +685,7 @@ def main() -> None:
     duration = 1.0 if args.quick else DURATION
     atomic_n = 200 if args.quick else 500
 
-    print(f"shmbridge IPC Benchmark  [backend={shmbridge._BACKEND}]")
+    print("shmbridge IPC Benchmark  [backend=cpp]")
     print(f"  n_iter={n_iter}, duration={duration:.1f}s, quick={args.quick}")
     print()
 
@@ -742,7 +752,7 @@ def main() -> None:
     output = {
         "benchmarks": results,
         "retry_stats": retry_stats,
-        "backend": shmbridge._BACKEND,
+        "backend": "cpp",
         "n_iter": n_iter,
         "duration": duration,
     }

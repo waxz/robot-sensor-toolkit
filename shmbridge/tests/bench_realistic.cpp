@@ -34,14 +34,11 @@ using namespace shmbridge::ros_compat;
 /* ── timing ───────────────────────────────────────────────────────────────── */
 
 static inline int64_t ns_now() noexcept {
-    struct timespec ts{};
-    ::clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (int64_t)ts.tv_sec * 1'000'000'000LL + (int64_t)ts.tv_nsec;
+    return static_cast<int64_t>(shmbridge::platform::now_ns());
 }
 
 static inline void sleep_ns(long ns) noexcept {
-    struct timespec ts{ ns / 1'000'000'000L, ns % 1'000'000'000L };
-    ::nanosleep(&ts, nullptr);
+    shmbridge::platform::sleep_ns(ns);
 }
 
 /* ── statistics ───────────────────────────────────────────────────────────── */
@@ -93,7 +90,7 @@ static void bench_spin_overhead(FILE* f) {
     /* A2 — spin_once with attached publisher, no new messages.
      * Cost = heartbeat rate check (~11ns) + poll (read_if_new returns nullopt). */
     {
-        ::shm_unlink("/sb_so_idle_pose");
+        platform::shm_destroy("/sb_so_idle_pose");
         auto pub_node = make_node("so_pub");
         auto sub_node = make_node("so_sub");
 
@@ -117,7 +114,7 @@ static void bench_spin_overhead(FILE* f) {
 
     /* A3 — spin_once: attached, message available, callback fires. */
     {
-        ::shm_unlink("/sb_so_msg_pose");
+        platform::shm_destroy("/sb_so_msg_pose");
         auto pub_node = make_node("so_msg_pub");
         auto sub_node = make_node("so_msg_sub");
 
@@ -153,7 +150,7 @@ static void bench_spin_overhead(FILE* f) {
 static void bench_publish_path(FILE* f) {
     fprintf(f, "\"publish_path\": {\n");
 
-    ::shm_unlink("/sb_pp_seqlock_pose");
+    platform::shm_destroy("/sb_pp_seqlock_pose");
     auto node = make_node("pp_node");
     auto pub  = node->create_publisher<Pose2d>("pp_seqlock_pose", SensorDataQoS());
     Pose2d msg{1.0, 2.0, 0.0, 0};
@@ -175,7 +172,7 @@ static void bench_publish_path(FILE* f) {
 
     /* B3 — direct shmbridge::Publisher write (no Node involved) */
     {
-        ::shm_unlink("/sb_pp_direct_pose");
+        platform::shm_destroy("/sb_pp_direct_pose");
         shmbridge::Publisher<Pose2d> direct;
         direct.open("pp_direct_pose");
         for (int i = 0; i < N; ++i) {
@@ -197,7 +194,7 @@ static void bench_publish_path(FILE* f) {
 static Stats cross_thread_latency(const char* shm_name,
                                   long pub_period_ns, long sub_period_ns,
                                   int n_messages, bool use_ring) {
-    ::shm_unlink(shm_name);
+    platform::shm_destroy(shm_name);
     std::string topic(shm_name + 1);  /* strip leading '/' */
 
     auto pub_node = make_node(std::string("cl_pub_") + topic);
@@ -360,7 +357,7 @@ static void bench_fanout(FILE* f) {
     fprintf(f, "\"fanout\": {\n");
 
     for (int nsubs : {1, 2, 4}) {
-        ::shm_unlink("/sb_fo_pose");
+        platform::shm_destroy("/sb_fo_pose");
         auto pub_node = make_node(std::string("fo_pub_") + std::to_string(nsubs));
 
         struct SubCtx {
@@ -439,7 +436,7 @@ static void bench_fanout(FILE* f) {
 static void bench_ring_sensor(FILE* f) {
     fprintf(f, "\"ring_sensor\": {\n");
 
-    ::shm_unlink("/sbr_rs_scan");
+    platform::shm_destroy("/sbr_rs_scan");
     auto pub_node = make_node("rs_pub");
     auto sub_node = make_node("rs_sub");
 

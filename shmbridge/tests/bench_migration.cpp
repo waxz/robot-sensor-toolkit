@@ -37,10 +37,7 @@ using namespace shmbridge::msg;
 /* ── timing helpers ───────────────────────────────────────────────────────── */
 
 static inline uint64_t now_ns() noexcept {
-    struct timespec ts{};
-    ::clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
-    return static_cast<uint64_t>(ts.tv_sec) * 1'000'000'000ULL
-         + static_cast<uint64_t>(ts.tv_nsec);
+    return shmbridge::platform::now_ns();
 }
 
 struct Stats {
@@ -86,17 +83,18 @@ static Stats bench_ring_push_pop_inprocess() {
     /* Single-threaded push immediately followed by pop — measures combined
      * slot write + read cost in the same process (L1 cache hot). */
     constexpr int WARMUP = 2000, N = 50000;
-    ::shm_unlink("/sbr_bm_ring_lat");
+    platform::shm_destroy("/sbr_bm_ring_lat");
 
-    RingPublisher<Pose2d, 256> pub;
-    pub.open("bm_ring_lat");
-    RingSubscriber<Pose2d, 256> sub;
-    sub.attach("bm_ring_lat", 1000);
+    RingConfig cfg; cfg.capacity = 256;
+    RingPublisher<Pose2d> pub;
+    pub.open("bm_ring_lat", cfg);
+    RingSubscriber<Pose2d> sub;
+    sub.try_attach("bm_ring_lat", cfg);
 
     Pose2d msg{1.0, 2.0, 0.5, 0};
     for (int i = 0; i < WARMUP; ++i) {
         pub.push(msg);
-        sub.pop();
+        sub.pop_ex();
     }
 
     std::vector<uint64_t> samples;
@@ -104,7 +102,7 @@ static Stats bench_ring_push_pop_inprocess() {
     for (int i = 0; i < N; ++i) {
         uint64_t t0 = now_ns();
         pub.push(msg);
-        sub.pop();
+        sub.pop_ex();
         uint64_t t1 = now_ns();
         samples.push_back(t1 - t0);
     }
@@ -112,23 +110,28 @@ static Stats bench_ring_push_pop_inprocess() {
 }
 
 static Stats bench_ring_push_inprocess() {
-    /* Push-only cost (ring full → drop path excluded). */
+    /* Push-only cost. Push can no longer fail for "ring full" (F-1) --
+     * the draining below is no longer needed to dodge a reject path, but
+     * is kept so this still measures push() against a ring that isn't
+     * perpetually full (an always-full ring's push() still succeeds, but
+     * would also always pay the eviction-bookkeeping cost; draining keeps
+     * this benchmark measuring the same "typical" push this always did). */
     constexpr int WARMUP = 2000, N = 50000;
-    ::shm_unlink("/sbr_bm_ring_push");
+    platform::shm_destroy("/sbr_bm_ring_push");
 
-    RingPublisher<Pose2d, 256> pub;
-    pub.open("bm_ring_push");
-    RingSubscriber<Pose2d, 256> sub;
-    sub.attach("bm_ring_push", 1000);
+    RingConfig cfg; cfg.capacity = 256;
+    RingPublisher<Pose2d> pub;
+    pub.open("bm_ring_push", cfg);
+    RingSubscriber<Pose2d> sub;
+    sub.try_attach("bm_ring_push", cfg);
 
     Pose2d msg{};
-    for (int i = 0; i < WARMUP; ++i) { pub.push(msg); sub.pop(); }
+    for (int i = 0; i < WARMUP; ++i) { pub.push(msg); sub.pop_ex(); }
 
     std::vector<uint64_t> samples;
     samples.reserve(N);
     for (int i = 0; i < N; ++i) {
-        /* Keep ring below half-full to avoid the full-drop path. */
-        if (i % 4 == 3) { sub.pop(); sub.pop(); }
+        if (i % 4 == 3) { sub.pop_ex(); sub.pop_ex(); }
         uint64_t t0 = now_ns();
         pub.push(msg);
         uint64_t t1 = now_ns();
@@ -140,22 +143,23 @@ static Stats bench_ring_push_inprocess() {
 static Stats bench_ring_pop_inprocess() {
     /* Pop-only cost. */
     constexpr int WARMUP = 2000, N = 50000;
-    ::shm_unlink("/sbr_bm_ring_pop");
+    platform::shm_destroy("/sbr_bm_ring_pop");
 
-    RingPublisher<Pose2d, 256> pub;
-    pub.open("bm_ring_pop");
-    RingSubscriber<Pose2d, 256> sub;
-    sub.attach("bm_ring_pop", 1000);
+    RingConfig cfg; cfg.capacity = 256;
+    RingPublisher<Pose2d> pub;
+    pub.open("bm_ring_pop", cfg);
+    RingSubscriber<Pose2d> sub;
+    sub.try_attach("bm_ring_pop", cfg);
 
     Pose2d msg{};
-    for (int i = 0; i < WARMUP; ++i) { pub.push(msg); sub.pop(); }
+    for (int i = 0; i < WARMUP; ++i) { pub.push(msg); sub.pop_ex(); }
 
     std::vector<uint64_t> samples;
     samples.reserve(N);
     for (int i = 0; i < N; ++i) {
         pub.push(msg);
         uint64_t t0 = now_ns();
-        sub.pop();
+        sub.pop_ex();
         uint64_t t1 = now_ns();
         samples.push_back(t1 - t0);
     }
@@ -166,35 +170,50 @@ static Stats bench_ring_pop_inprocess() {
  * Returns messages per second. */
 static double bench_ring_spsc_throughput() {
     constexpr uint64_t N = 2'000'000;
-    ::shm_unlink("/sbr_bm_ring_thr");
+    platform::shm_destroy("/sbr_bm_ring_thr");
 
-    RingPublisher<Pose2d, 1024> pub;
-    pub.open("bm_ring_thr");
+    RingConfig cfg; cfg.capacity = 1024;
+    RingPublisher<Pose2d> pub;
+    pub.open("bm_ring_thr", cfg);
 
     std::atomic<bool> go{false};
-    std::atomic<uint64_t> producer_ns{0}, consumer_ns{0};
+    std::atomic<bool> producer_done{false};
+    std::atomic<uint64_t> producer_ns{0}, consumer_ns{0}, consumed_total{0};
 
     std::thread producer([&] {
         Pose2d msg{};
         while (!go.load(std::memory_order_relaxed));  /* sync start */
         uint64_t t0 = now_ns();
-        uint64_t pushed = 0;
-        while (pushed < N) {
-            if (pub.push(msg)) ++pushed;
-        }
+        for (uint64_t i = 0; i < N; ++i) pub.push(msg);
         producer_ns.store(now_ns() - t0, std::memory_order_relaxed);
+        producer_done.store(true, std::memory_order_release);
     });
 
     std::thread consumer([&] {
-        RingSubscriber<Pose2d, 1024> sub;
-        sub.attach("bm_ring_thr", 2000);
+        RingSubscriber<Pose2d> sub;
+        sub.attach("bm_ring_thr", 2000, cfg);
         while (!go.load(std::memory_order_relaxed));
         uint64_t t0 = now_ns();
         uint64_t consumed = 0;
-        while (consumed < N) {
-            if (auto r = sub.pop()) { ++consumed; (void)r; }
+        /*
+         * push() can no longer fail for "ring full" (F-1): with no
+         * backpressure, a producer this tight can race far ahead of the
+         * consumer and overwrite data before the consumer ever sees it
+         * (R-6, accepted risk, §7). Looping "until consumed == N" assumed
+         * the old reject-on-full contract throttled the producer for it
+         * -- under the new contract that can hang forever instead of
+         * measuring anything, exactly the bug a real hang caught in
+         * tests/test_migration.cpp's equivalent Ring.Throughput case
+         * during phase 7 verification. Bound the loop by the producer's
+         * completion instead, plus one final drain for stragglers, and
+         * report throughput against what was actually received.
+         */
+        while (!producer_done.load(std::memory_order_acquire)) {
+            if (auto r = sub.pop_ex()) { ++consumed; (void)r; }
         }
+        while (auto r = sub.pop_ex()) { ++consumed; (void)r; } /* final catch-up drain */
         consumer_ns.store(now_ns() - t0, std::memory_order_relaxed);
+        consumed_total.store(consumed, std::memory_order_relaxed);
     });
 
     std::this_thread::sleep_for(std::chrono::milliseconds(100)); /* let sub attach */
@@ -202,16 +221,21 @@ static double bench_ring_spsc_throughput() {
     producer.join();
     consumer.join();
 
-    /* Throughput = N / max(producer_time, consumer_time) */
+    /* Throughput = actually-received count / max(producer_time,
+     * consumer_time) -- not N / time, since the new overwrite-on-full
+     * contract no longer guarantees every pushed item is ever received
+     * (R-6). A consumer running close to the producer's rate still
+     * receives close to N; a slower one legitimately receives less, and
+     * that's now a real, reportable number rather than an assumption. */
     uint64_t wall = std::max(producer_ns.load(), consumer_ns.load());
-    return static_cast<double>(N) / (static_cast<double>(wall) / 1e9) / 1e6; /* Mmsg/s */
+    return static_cast<double>(consumed_total.load()) / (static_cast<double>(wall) / 1e9) / 1e6; /* Mmsg/s */
 }
 
 /* ── Seqlock benchmarks (for comparison) ─────────────────────────────────── */
 
 static Stats bench_seqlock_write_inprocess() {
     constexpr int WARMUP = 2000, N = 50000;
-    ::shm_unlink("/sb_bm_seq_write");
+    platform::shm_destroy("/sb_bm_seq_write");
 
     Publisher<Pose2d> pub;
     pub.open("bm_seq_write");
@@ -232,7 +256,7 @@ static Stats bench_seqlock_write_inprocess() {
 
 static Stats bench_seqlock_read_inprocess() {
     constexpr int WARMUP = 2000, N = 50000;
-    ::shm_unlink("/sb_bm_seq_read");
+    platform::shm_destroy("/sb_bm_seq_read");
 
     Publisher<Pose2d> pub;
     pub.open("bm_seq_read");
@@ -259,7 +283,7 @@ static Stats bench_seqlock_read_inprocess() {
 
 static Stats bench_seqlock_write_read_inprocess() {
     constexpr int WARMUP = 2000, N = 50000;
-    ::shm_unlink("/sb_bm_seq_wr");
+    platform::shm_destroy("/sb_bm_seq_wr");
 
     Publisher<Pose2d> pub;
     pub.open("bm_seq_wr");
@@ -284,7 +308,7 @@ static Stats bench_seqlock_write_read_inprocess() {
 /* ── Seqlock MRSW: 4 concurrent readers vs 1 writer ─────────────────────── */
 
 static Stats bench_seqlock_read_contended(int n_readers) {
-    ::shm_unlink("/sb_bm_seq_cont");
+    platform::shm_destroy("/sb_bm_seq_cont");
     Publisher<Pose2d> pub;
     pub.open("bm_seq_cont");
 
@@ -392,7 +416,7 @@ static Stats bench_registry_heartbeat() {
 
 /* Direct seqlock: pub.write_notify() → sub.read_if_new() */
 static Stats bench_direct_seqlock_roundtrip() {
-    ::shm_unlink("/sb_bm_direct_rt");
+    platform::shm_destroy("/sb_bm_direct_rt");
     Publisher<Pose2d> pub;
     pub.open("bm_direct_rt");
     Subscriber<Pose2d> sub;
@@ -416,7 +440,7 @@ static Stats bench_direct_seqlock_roundtrip() {
 
 /* Node wrapper: node.publish() → spin_once() callback */
 static Stats bench_node_publish_spin() {
-    ::shm_unlink("/sb_bm_node_rt");
+    platform::shm_destroy("/sb_bm_node_rt");
 
     using namespace ros_compat;
     auto pub_node = make_node("bm_pub");
@@ -456,22 +480,23 @@ static Stats bench_node_publish_spin() {
 
 /* Direct ring: push() → pop() vs Node ring path. */
 static Stats bench_direct_ring_roundtrip() {
-    ::shm_unlink("/sbr_bm_direct_ring");
-    RingPublisher<Twist, 64> pub;
-    pub.open("bm_direct_ring");
-    RingSubscriber<Twist, 64> sub;
-    sub.attach("bm_direct_ring", 1000);
+    platform::shm_destroy("/sbr_bm_direct_ring");
+    RingConfig cfg; cfg.capacity = 64;
+    RingPublisher<Twist> pub;
+    pub.open("bm_direct_ring", cfg);
+    RingSubscriber<Twist> sub;
+    sub.try_attach("bm_direct_ring", cfg);
 
     Twist msg{};
     constexpr int WARMUP = 1000, N = 20000;
-    for (int i = 0; i < WARMUP; ++i) { pub.push(msg); sub.pop(); }
+    for (int i = 0; i < WARMUP; ++i) { pub.push(msg); sub.pop_ex(); }
 
     std::vector<uint64_t> samples;
     samples.reserve(N);
     for (int i = 0; i < N; ++i) {
         uint64_t t0 = now_ns();
         pub.push(msg);
-        sub.pop();
+        sub.pop_ex();
         uint64_t t1 = now_ns();
         samples.push_back(t1 - t0);
     }
@@ -479,7 +504,7 @@ static Stats bench_direct_ring_roundtrip() {
 }
 
 static Stats bench_node_ring_spin() {
-    ::shm_unlink("/sbr_bm_node_ring");
+    platform::shm_destroy("/sbr_bm_node_ring");
 
     using namespace ros_compat;
     auto pub_node = make_node("bm_ring_pub");

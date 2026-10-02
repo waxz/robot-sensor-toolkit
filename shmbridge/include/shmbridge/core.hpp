@@ -37,7 +37,12 @@
  * Split writer / reader fences instead of seq_cst.
  * On x86 (TSO) these compile to compiler barriers only — no mfence (~30 ns).
  * On AArch64 they emit dmb ishst / dmb ish, still lighter than dmb sy.
+ *
+ * The outer #ifndef _SB_FENCE_W guard lets this coexist with topic.hpp in
+ * the same translation unit (e.g. ext_core.hpp + ext_topics.hpp both
+ * included from py_bindings.cpp) — see topic.hpp's matching comment for why.
  * ─────────────────────────────────────────────────────────────────────────── */
+#ifndef _SB_FENCE_W
 #ifdef __cplusplus
 #  include <atomic>
 /* StoreStore: seals the write window before and after payload stores. */
@@ -61,6 +66,11 @@
 #  define _SB_PAUSE() __asm__ volatile("yield" ::: "memory")
 #else
 #  define _SB_PAUSE() ((void)0)
+#endif
+#endif /* _SB_FENCE_W */
+
+#ifdef __cplusplus
+#  include <atomic>
 #endif
 
 namespace shmbridge {
@@ -91,7 +101,14 @@ struct RobotCmd {
 
 namespace detail {
 
+/* Guarded so this coexists with topic.hpp's identical detail::now_ns() in
+ * the same translation unit (e.g. ext_core.hpp + ext_topics.hpp both
+ * included from py_bindings.cpp) — a plain `inline` doesn't protect against
+ * two definitions in the *same* TU, only across separate ones. */
+#ifndef SHMBRIDGE_DETAIL_NOW_NS_DEFINED
+#define SHMBRIDGE_DETAIL_NOW_NS_DEFINED
 inline uint64_t now_ns() noexcept { return platform::now_ns(); }
+#endif
 
 inline size_t raw_size(unsigned n, unsigned nc) noexcept {
     return 128u + 128u * n + 128u * n * nc;

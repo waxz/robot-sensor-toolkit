@@ -10,32 +10,31 @@
  *   2 = reserving (CAS 0→2, write fields, then 2→1)
  *   1 = active
  *
- * Liveness: dual check — heartbeat TTL AND kill(pid, 0) (EPERM means alive).
+ * Liveness: dual check — heartbeat TTL AND platform::process_alive(pid).
  *
  * Topic encoding in NodeSlot::topics[]:
  *   "pub=foo,bar|sub=~baz,qux"
  *   '~' prefix on a sub topic = wants keep_latest (seqlock slot).
  *   No prefix on a sub topic  = wants FIFO ring.
+ *
+ * Built on platform.hpp's cross-platform shm_create/shm_attach/shm_unmap/
+ * current_pid/process_alive (the same primitives ring.hpp and topic.hpp use)
+ * instead of raw POSIX shm_open/mmap/kill calls, so this header -- and
+ * node.hpp, which includes it -- builds on Windows. Previously Unix-only;
+ * see docs/design_ring_zero_copy.md §16 for why this was out of that design
+ * plan's original scope and when it was ported.
  */
 
 #pragma once
+
+#include "platform.hpp"
 
 #include <atomic>
 #include <cassert>
 #include <cstdint>
 #include <cstring>
-#include <ctime>
 #include <string>
 #include <vector>
-
-#if defined(__APPLE__) || defined(__linux__)
-#  include <cerrno>
-#  include <fcntl.h>
-#  include <signal.h>
-#  include <sys/mman.h>
-#  include <sys/stat.h>
-#  include <unistd.h>
-#endif
 
 namespace shmbridge {
 
@@ -50,28 +49,7 @@ static const char* DISCOVERY_SHM = "/sb_discovery";
 
 /* ── helpers ──────────────────────────────────────────────────────────────── */
 
-/* File-scope anonymous namespace: avoids ODR conflict with topic.hpp's
- * shmbridge::reg_now_ns() when both headers appear in the same TU. */
-namespace {
-inline uint64_t reg_now_ns() noexcept {
-    struct timespec ts{};
-    ::clock_gettime(CLOCK_MONOTONIC, &ts);
-    return static_cast<uint64_t>(ts.tv_sec) * 1'000'000'000ULL
-         + static_cast<uint64_t>(ts.tv_nsec);
-}
-} /* anonymous namespace */
-
 namespace detail {
-
-/* Returns true if process pid is alive on this host. */
-inline bool pid_alive(int pid) noexcept {
-    if (pid <= 0) return false;
-    int rc = ::kill(pid, 0);
-    if (rc == 0)          return true;   /* success — process exists        */
-    if (errno == EPERM)   return true;   /* exists but we lack permission   */
-    /* ESRCH — process gone; any other error is treated as gone */
-    return false;
-}
 
 /* Encode published / subscribed topics into NodeSlot::topics format. */
 inline std::string encode_topics(const std::vector<std::string>& pubs,
@@ -182,13 +160,21 @@ public:
 
     bool open() noexcept {
         const std::size_t seg = sizeof(NodeSlot) * MAX_NODES;
-        /* Try create first, fall back to attach. */
-        int fd = ::shm_open(DISCOVERY_SHM, O_CREAT | O_RDWR, 0666);
-        if (fd < 0) return false;
-        if (::ftruncate(fd, static_cast<off_t>(seg)) < 0) { ::close(fd); return false; }
-        void* p = ::mmap(nullptr, seg, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-        ::close(fd);
-        if (p == MAP_FAILED) return false;
+        /*
+         * shm_open_or_create(), not shm_create(): this is a single,
+         * shared, persistent table every node on the host reads and
+         * writes into, unlike a ring.hpp topic's segment (owned by one
+         * producer, free to force-recreate it after a crash). Every
+         * process's open() must idempotently join the same existing
+         * table, never wipe it -- see platform.hpp's doc comment on
+         * shm_open_or_create() for why shm_create() would be wrong here.
+         */
+        void* p = nullptr;
+        try {
+            p = platform::shm_open_or_create(DISCOVERY_SHM, seg);
+        } catch (const std::system_error&) {
+            return false;
+        }
         slots_ = static_cast<NodeSlot*>(p);
         seg_size_ = seg;
         return true;
@@ -221,10 +207,10 @@ public:
                 continue;  /* slot taken or being reserved */
             }
             /* We own the slot exclusively now — write fields. */
-            slots_[i].pid = static_cast<int32_t>(::getpid());
+            slots_[i].pid = static_cast<int32_t>(platform::current_pid());
             std::strncpy(slots_[i].node_id, node_id, NODE_ID_LEN - 1);
             slots_[i].node_id[NODE_ID_LEN - 1] = '\0';
-            slots_[i].last_heartbeat_ns = reg_now_ns();
+            slots_[i].last_heartbeat_ns = platform::now_ns();
             std::strncpy(slots_[i].topics, enc.c_str(), TOPICS_LEN - 1);
             slots_[i].topics[TOPICS_LEN - 1] = '\0';
             /* Publish — make slot visible. */
@@ -239,7 +225,7 @@ public:
     void heartbeat(int slot_idx) noexcept {
         if (!slots_ || slot_idx < 0 || slot_idx >= MAX_NODES) return;
         if (slots_[slot_idx].active.load(std::memory_order_relaxed) != 1) return;
-        slots_[slot_idx].last_heartbeat_ns = reg_now_ns();
+        slots_[slot_idx].last_heartbeat_ns = platform::now_ns();
     }
 
     /* Update the topic list for a previously registered slot. */
@@ -273,16 +259,16 @@ public:
                                        int exclude_slot = -1) const noexcept {
         if (!slots_) return {};
         std::vector<NodeInfo> out;
-        const uint64_t now = reg_now_ns();
+        const uint64_t now = platform::now_ns();
         for (int i = 0; i < MAX_NODES; ++i) {
             if (i == exclude_slot) continue;
             if (slots_[i].active.load(std::memory_order_acquire) != 1) continue;
             int32_t  pid = slots_[i].pid;
             uint64_t hb  = slots_[i].last_heartbeat_ns;
             double   age = static_cast<double>(now - hb) / 1e9;
-            /* Dual liveness: TTL AND kill(pid,0). */
+            /* Dual liveness: TTL AND platform::process_alive(pid). */
             if (age > ttl_sec) continue;
-            if (!detail::pid_alive(pid)) continue;
+            if (!platform::process_alive(static_cast<uint32_t>(pid))) continue;
             NodeInfo ni;
             ni.slot    = i;
             ni.pid     = pid;
@@ -309,7 +295,7 @@ public:
     void close() noexcept {
         if (!slots_) return;
         if (slot_idx_ >= 0) unregister_node(slot_idx_);
-        ::munmap(slots_, seg_size_);
+        platform::shm_unmap(slots_, seg_size_);
         slots_    = nullptr;
         seg_size_ = 0;
     }

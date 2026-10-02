@@ -1,37 +1,40 @@
 /*
- * listener.cpp -- receives robot state and writes velocity commands.
+ * listener.cpp -- receives 'robot/pose' via a MessageQueue<Pose2d>,
+ * printing each message's age (publish-to-observe latency, microseconds).
+ * This is the reference implementation the README's own "Quick start — C++
+ * Node API" section documents inline (the queue/deferred-style variant);
+ * kept here as a buildable, runnable copy so the two never drift apart.
  *
- * Demonstrates the reconnect loop: attach() auto-detaches any previous
- * mapping so it is safe to call repeatedly when the publisher restarts.
+ * Demonstrates the deferred-callback pattern: spin_once() only accumulates
+ * messages into the queue (attaching lazily, never blocking), decoupling
+ * message arrival from processing -- no callback-timing pressure the way
+ * create_subscription()'s inline-callback style has. pop_latest() discards
+ * any backlog and returns only the newest value (F-13's semantics,
+ * surfaced here at the MessageQueue level).
+ *
+ * Starting this before talker, or restarting talker while this keeps
+ * running, both just work with no special-case code here: spin_once()
+ * retries attaching automatically (never throws for "not found yet"), and
+ * node.hpp's resilient-loop wiring (§5.8/R-9) detaches and re-attaches on
+ * its own if the publisher it was already attached to closes.
  *
  * Build:
  *   cmake -B build && cmake --build build
  *
- * Run (either order; listener re-attaches each time talker restarts):
+ * Run (either order):
  *   ./build/listener
- *
- * Reconnect pattern:
- *   while (running) {
- *       // retry attach in 1-second chunks so Ctrl-C is processed promptly
- *       while (running) { try { sub.attach(1000); break; } catch (...) {} }
- *       while (sub.is_publisher_alive(500)) { ... read + write_cmd ... }
- *       sub.detach();               // publisher gone -- loop back
- *   }
  */
 
-#include <shmbridge/core.hpp>
+#include <shmbridge/node.hpp>
+#include <shmbridge/messages.hpp>
 
 #include <chrono>
 #include <csignal>
-#include <cmath>
 #include <cstdio>
 #include <thread>
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
-using namespace shmbridge;
+namespace sb  = shmbridge::ros_compat;
+namespace msg = shmbridge::msg;
 
 static volatile bool g_running = true;
 
@@ -39,61 +42,32 @@ int main() {
     std::signal(SIGINT,  [](int) { g_running = false; });
     std::signal(SIGTERM, [](int) { g_running = false; });
 
-    const std::string name    = "/sb_demo";
-    const unsigned consumer   = 0;
-    uint64_t       frames     = 0;
+    sb::init();
+    auto node = sb::make_node("listener");
 
-    ShmSubscriber sub(name, /*n_robots=*/1);
+    /* create_queue returns {subscription_handle, shared_ptr<MessageQueue<T>>}. */
+    auto [sub, queue] = node->create_queue<msg::Pose2d>("robot/pose", sb::SensorDataQoS());
+    (void)sub; /* the handle just needs to stay alive; nothing else to call on it here */
 
+    std::printf("listener: waiting for 'robot/pose' -- Ctrl-C to stop\n");
+
+    uint64_t frames = 0;
     while (g_running) {
-        std::printf("listener: waiting for publisher '%s'...\n", name.c_str());
+        node->spin_once(); /* attaches lazily; never blocks */
 
-        /* Retry attach in 1-second chunks so Ctrl-C is responded to promptly */
-        bool attached = false;
-        while (g_running && !attached) {
-            try {
-                sub.attach(1000.0);
-                attached = true;
-            } catch (const std::exception&) { /* timeout -- keep waiting */ }
+        if (auto pose = queue->pop_latest()) {
+            uint64_t age_us = (shmbridge::detail::now_ns() - pose->stamp_ns) / 1000;
+            ++frames;
+            if (frames % 100 == 0 || frames == 1)
+                std::printf("listener: frame=%llu  x=%+.2f y=%+.2f heading=%+.2f  age=%lluus\n",
+                            (unsigned long long)frames, pose->x, pose->y, pose->heading,
+                            (unsigned long long)age_us);
         }
-        if (!attached) break;
 
-        std::printf("listener: attached -- reading state\n");
-
-        while (g_running) {
-            auto state = sub.read_state_spin(0);
-            if (state) {
-                /* Proportional heading controller aimed at origin */
-                double err_x = -state->x;
-                double err_y = -state->y;
-                double dist  = std::hypot(err_x, err_y);
-                double desired = std::atan2(err_y, err_x);
-                double hd_err  = desired - state->heading;
-                while (hd_err >  M_PI) hd_err -= 2.0 * M_PI;
-                while (hd_err < -M_PI) hd_err += 2.0 * M_PI;
-
-                float linear  = static_cast<float>(std::min(0.5 * dist, 1.0));
-                float angular = static_cast<float>(1.5 * hd_err);
-                sub.write_cmd(0, consumer, linear, angular);
-                ++frames;
-
-                if (frames % 100 == 0)
-                    std::printf("listener: step=%llu  x=%+.3f y=%+.3f"
-                                "  -> lin=%.2f ang=%.2f\n",
-                                (unsigned long long)state->step,
-                                state->x, state->y, linear, angular);
-            }
-
-            if (!sub.is_publisher_alive(500.0)) {
-                std::printf("listener: publisher went away -- waiting for restart\n");
-                sub.detach();
-                break;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
-    std::printf("listener: stopped (%llu frames received)\n",
-                (unsigned long long)frames);
+    sb::shutdown();
+    std::printf("listener: stopped (%llu frames received)\n", (unsigned long long)frames);
     return 0;
 }

@@ -5,7 +5,7 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "shmbridge"
 version = "2.1.0"
-description = "POSIX shared-memory seqlock bridge for Python and C++ robot control"
+description = "Cross-platform shared-memory seqlock bridge for Python and C++ robot control"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"

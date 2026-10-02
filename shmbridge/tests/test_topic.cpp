@@ -1,11 +1,16 @@
 /*
  * test_topic.cpp — C++ unit tests for shmbridge v3 generic Publisher/Subscriber.
  *
+ * Platform-independent: every shm/notify/process primitive goes through
+ * platform.hpp, including the multi-process test below, which launches
+ * separate test_topic_sub_helper processes via platform::run_and_capture()
+ * instead of fork() (no Windows equivalent).
+ *
  * Tests cover:
  *  1. Basic write/read for every predefined message type
  *  2. type_id<T>() — same type produces same hash, different types differ
  *  3. Type mismatch detection at attach() (TypeMismatch error)
- *  4. Multiple subscribers — no race condition (fork, N=4 concurrent readers)
+ *  4. Multiple subscribers — no race condition (N=4 concurrent reader processes)
  *  5. Broadcast notify — all N subscribers wake within a deadline
  *  6. read_if_new() — returns nullopt until a new write occurs
  *  7. wait_new() — skips already-seen write_ns values
@@ -13,30 +18,35 @@
  *  9. Torn-read statistics under zero-contention (torn_reads ≈ 0)
  * 10. SeqlockSlot size invariant (always 128 bytes)
  *
- * Build (standalone, requires googletest):
+ * Build:
  *   cmake -DSHMBRIDGE_BUILD_TESTS=ON -S . -B build
  *   cmake --build build
  *   ctest --test-dir build -V
- *
- * Or directly:
- *   g++ -std=c++17 -O2 -I include tests/test_topic.cpp \
- *       -lgtest -lgtest_main -pthread -lrt -o test_topic
- *   ./test_topic
  */
 
 #include <gtest/gtest.h>
 
+#include <shmbridge/platform.hpp>
 #include <shmbridge/topic.hpp>
 #include <shmbridge/messages.hpp>
 
-#include <sys/wait.h>
-#include <unistd.h>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <chrono>
+#include <future>
 #include <thread>
 #include <atomic>
+#include <utility>
 #include <vector>
+
+/* SHMBRIDGE_SUB_HELPER_PATH: absolute path to test_topic_sub_helper's built
+ * executable, injected by CMakeLists.txt via target_compile_definitions
+ * ($<TARGET_FILE:test_topic_sub_helper>) so this test never has to guess
+ * the build-type/output-directory layout a given generator uses. */
+#ifndef SHMBRIDGE_SUB_HELPER_PATH
+#  error "SHMBRIDGE_SUB_HELPER_PATH must be defined by CMakeLists.txt"
+#endif
 
 using namespace shmbridge;
 using namespace shmbridge::msg;
@@ -45,13 +55,13 @@ using namespace shmbridge::msg;
 
 /* Unique shm name per test to avoid leakage between runs */
 static std::string unique_name(const char* base) {
-    return std::string(base) + "_" + std::to_string(::getpid());
+    return std::string(base) + "_" + std::to_string(shmbridge::platform::current_pid());
 }
 
 /* RAII cleaner that removes the shm segment on destruction */
 struct ShmCleaner {
     std::string name;
-    ~ShmCleaner() { ::shm_unlink(("/sb_" + name).c_str()); }
+    ~ShmCleaner() { shmbridge::platform::shm_destroy("/sb_" + name); }
 };
 
 /* ── §10  SeqlockSlot size invariant ─────────────────────────────────────── */
@@ -293,16 +303,19 @@ TEST(Stats, TornReadsNearZeroWithoutContention) {
     EXPECT_LE(sub.stats().torn_reads, static_cast<uint64_t>(N / 100));
 }
 
-/* ── §4  Multiple subscribers — no race condition (fork-based) ───────────── */
+/* ── §4  Multiple subscribers — no race condition (multi-process) ────────── */
 
 /*
- * Forks N_SUB child processes. Each child attaches as a subscriber, reads
- * READS_PER_CHILD messages, checks that values decode correctly, and records
- * torn-read counts. Children communicate results back via a pipe.
+ * Launches N_SUB genuinely separate OS processes (test_topic_sub_helper,
+ * via platform::run_and_capture() -- see that function's doc comment in
+ * platform.hpp for why this replaces fork(), which has no Windows
+ * equivalent). Each helper attaches as a subscriber, reads READS_PER_CHILD
+ * messages, and prints its torn-read stats to stdout, which this test
+ * parses back out.
  *
- * Expected: all children get correct data; torn_reads / total_reads < 1%.
+ * Expected: all children get correct data; torn_reads / total_reads < 5%.
  */
-TEST(MultipleSubscribers, NoRaceConditionForkN4) {
+TEST(MultipleSubscribers, NoRaceConditionMultiProcessN4) {
     constexpr int  N_SUB          = 4;
     constexpr int  WRITES         = 200;
     constexpr int  READS_PER_CHILD = WRITES;
@@ -313,70 +326,47 @@ TEST(MultipleSubscribers, NoRaceConditionForkN4) {
     Publisher<Pose2d> pub(1);
     ASSERT_EQ(pub.open(name), TopicError::Ok);
 
-    /* Write some data before forking so the segment is ready */
+    /* Write some data before launching helpers so the segment is ready */
     Pose2d seed; seed.x = 0; seed.stamp_ns = 1;
     pub.write(seed);
 
-    struct ChildResult { uint64_t torn; uint64_t total; int last_seq; };
-    int pipes[N_SUB][2];
-    pid_t pids[N_SUB];
-
+    /* Launch all N_SUB helper processes concurrently; each run_and_capture()
+     * call blocks until its own helper exits, so each needs its own thread
+     * to run alongside this test's writer loop below. */
+    std::vector<std::future<std::pair<int, std::string>>> helpers;
+    helpers.reserve(N_SUB);
     for (int i = 0; i < N_SUB; ++i) {
-        ASSERT_EQ(::pipe(pipes[i]), 0);
-        pids[i] = ::fork();
-        ASSERT_GE(pids[i], 0);
-
-        if (pids[i] == 0) {
-            /* Child */
-            ::close(pipes[i][0]);
-            Subscriber<Pose2d> sub;
-            auto err = sub.attach(name, 3000);
-            if (err != TopicError::Ok) { ::exit(1); }
-
-            int last_x = -1;
-            for (int r = 0; r < READS_PER_CHILD; ++r) {
-                auto res = sub.spin(256);
-                if (res) last_x = static_cast<int>(res->value.x);
-            }
-            ChildResult cr;
-            cr.torn  = sub.stats().torn_reads;
-            cr.total = sub.stats().total_reads;
-            cr.last_seq = last_x;
-            ::write(pipes[i][1], &cr, sizeof(cr));
-            ::close(pipes[i][1]);
-            ::exit(0);
-        } else {
-            ::close(pipes[i][1]);
-        }
+        std::string cmd = std::string("\"") + SHMBRIDGE_SUB_HELPER_PATH + "\" \""
+                         + name + "\" " + std::to_string(READS_PER_CHILD);
+        helpers.push_back(std::async(std::launch::async, [cmd] {
+            return shmbridge::platform::run_and_capture(cmd);
+        }));
     }
 
-    /* Parent: write WRITES messages */
+    /* Writer: write WRITES messages */
     for (int w = 0; w < WRITES; ++w) {
         Pose2d m; m.x = static_cast<double>(w); m.stamp_ns = static_cast<uint64_t>(w + 1);
         pub.write(m);
         /* tiny sleep to let subscribers observe intermediate values */
-        struct timespec sl{0, 500'000L};
-        ::nanosleep(&sl, nullptr);
+        shmbridge::platform::sleep_ns(500'000);
     }
 
-    /* Collect child results */
+    /* Collect helper results */
     for (int i = 0; i < N_SUB; ++i) {
-        ChildResult cr{};
-        ssize_t got = ::read(pipes[i][0], &cr, sizeof(cr));
-        ::close(pipes[i][0]);
-        int status = 0;
-        ::waitpid(pids[i], &status, 0);
+        auto [exit_code, out] = helpers[i].get();
+        ASSERT_EQ(exit_code, 0)
+            << "Helper " << i << " exited abnormally; output: " << out;
 
-        EXPECT_EQ(got, static_cast<ssize_t>(sizeof(cr)))
-            << "Child " << i << " pipe read failed";
-        EXPECT_EQ(WIFEXITED(status) ? WEXITSTATUS(status) : -1, 0)
-            << "Child " << i << " exited abnormally";
+        unsigned long long torn = 0, total = 0;
+        int last_x = -1;
+        int parsed = std::sscanf(out.c_str(), "torn=%llu total=%llu last_x=%d",
+                                  &torn, &total, &last_x);
+        ASSERT_EQ(parsed, 3) << "Helper " << i << " produced unparseable output: " << out;
 
-        if (cr.total > 0) {
-            double torn_pct = 100.0 * static_cast<double>(cr.torn)
-                            / static_cast<double>(cr.total);
+        if (total > 0) {
+            double torn_pct = 100.0 * static_cast<double>(torn) / static_cast<double>(total);
             EXPECT_LT(torn_pct, 5.0)
-                << "Child " << i << " torn-read rate " << torn_pct << "% > 5%";
+                << "Helper " << i << " torn-read rate " << torn_pct << "% > 5%";
         }
     }
 }
@@ -389,8 +379,14 @@ TEST(MultipleSubscribers, NoRaceConditionForkN4) {
  * Uses threads (not fork) because wait() blocks the calling thread; each
  * subscriber thread records its wakeup time and we check all N woke within
  * a generous 100 ms of the write.
+ *
+ * Previously gated to #if defined(__linux__): wait()/write_notify() used a
+ * raw Linux futex directly at the time. Both now go through platform.hpp's
+ * notify_bind/notify_wake_all/notify_wait (fixed for Windows during the
+ * ring design plan's phase 1, R-18), so this is no longer Linux-specific --
+ * verified passing on native Windows/MSVC in the same session this comment
+ * was added.
  */
-#if defined(__linux__)
 TEST(BroadcastNotify, AllSubscribersWake) {
     constexpr int  N_SUB     = 4;
     constexpr int  TIMEOUT_MS = 100;
@@ -438,14 +434,13 @@ TEST(BroadcastNotify, AllSubscribersWake) {
         EXPECT_TRUE(woke[i].load()) << "Subscriber " << i << " did not wake";
     }
 }
-#endif /* __linux__ */
 
 /* ── §11  Topic name with slashes ────────────────────────────────────────── */
 
 TEST(TopicName, SlashesConvertedToSafeShm) {
     /* "/myrobot/sensors/imu" must not crash; shm_open on the raw name
      * would fail (embedded slash is illegal in shm segment names). */
-    auto name = std::string("myrobot_slash_") + std::to_string(::getpid());
+    auto name = std::string("myrobot_slash_") + std::to_string(shmbridge::platform::current_pid());
     Publisher<Imu>  pub;
     Subscriber<Imu> sub;
     ASSERT_EQ(pub.open(name), TopicError::Ok);

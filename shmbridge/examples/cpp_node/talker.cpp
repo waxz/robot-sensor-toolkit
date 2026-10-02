@@ -1,21 +1,30 @@
 /*
- * talker.cpp — publishes robot state at 100 Hz using ShmPublisher.
+ * talker.cpp -- publishes Pose2d at 100 Hz using the ros_compat Node API
+ * (shmbridge/node.hpp). This is the reference implementation the README's
+ * own "Quick start — C++ Node API" section documents inline; kept here as
+ * a buildable, runnable copy so the two never drift apart.
+ *
+ * SensorDataQoS() (depth=1) maps to a seqlock (keep-latest) topic, not the
+ * SPSC ring -- see node.hpp's own doc comment for the depth<=1 vs depth>1
+ * rule. For a ring-backed walkthrough of zero-copy write/read, pop_latest,
+ * freshness checks, config resolution, and the rest of ring.hpp's feature
+ * set the Node API doesn't expose directly, see
+ * ../cpp_ring_features/ring_features_demo.cpp.
  *
  * Build:
  *   cmake -B build && cmake --build build
  *
- * Run (start before or after listener — either order works):
+ * Run (either order -- listener attaches lazily and reattaches
+ * automatically if talker restarts, §5.8/R-9):
  *   ./build/talker
- *
- * The publisher writes a circular-motion trajectory and prints any velocity
- * commands it receives from listener.
  */
 
-#include <shmbridge/core.hpp>
+#include <shmbridge/node.hpp>
+#include <shmbridge/messages.hpp>
 
 #include <chrono>
-#include <csignal>
 #include <cmath>
+#include <csignal>
 #include <cstdio>
 #include <thread>
 
@@ -23,7 +32,8 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-using namespace shmbridge;
+namespace sb  = shmbridge::ros_compat;
+namespace msg = shmbridge::msg;
 
 static volatile bool g_running = true;
 
@@ -31,35 +41,32 @@ int main() {
     std::signal(SIGINT,  [](int) { g_running = false; });
     std::signal(SIGTERM, [](int) { g_running = false; });
 
-    const std::string name = "/sb_demo";
-    ShmPublisher pub(name, /*n_robots=*/1, /*n_consumers=*/1, /*heartbeat_every=*/1);
+    sb::init();
+    auto node = sb::make_node("talker");
 
-    std::printf("talker: opening segment '%s' at 100 Hz\n", name.c_str());
-    pub.open();
-    std::printf("talker: publishing — Ctrl-C to stop\n");
+    /* SensorDataQoS (depth=1) -> seqlock, keep-latest. */
+    auto pub = node->create_publisher<msg::Pose2d>("robot/pose", sb::SensorDataQoS());
 
+    std::printf("talker: publishing 'robot/pose' at 100 Hz -- Ctrl-C to stop\n");
+
+    msg::Pose2d pose{};
     unsigned step = 0;
     while (g_running) {
         const double t = step * 0.01;
-        RobotState s;
-        s.x        = std::cos(2.0 * M_PI * t / 5.0);
-        s.y        = std::sin(2.0 * M_PI * t / 5.0);
-        s.heading  = std::fmod(2.0 * M_PI * t / 5.0, 2.0 * M_PI);
-        s.step     = step;
-        s.sim_time = t;
-        pub.write_state(0, s);
+        pose.x        = std::cos(2.0 * M_PI * t / 5.0);
+        pose.y        = std::sin(2.0 * M_PI * t / 5.0);
+        pose.heading  = std::fmod(2.0 * M_PI * t / 5.0, 2.0 * M_PI);
+        pose.stamp_ns = shmbridge::detail::now_ns();
+        pub->publish(pose); /* zero-overhead handle path -- no map lookup, no cast */
 
-        auto cmd = pub.read_best_cmd(0);
-        if (cmd && step % 100 == 0)
-            std::printf("talker: step=%4u  x=%+.2f y=%+.2f"
-                        "  cmd(lin=%.2f ang=%.2f)\n",
-                        step, s.x, s.y, cmd->linear, cmd->angular);
-
+        if (step % 100 == 0)
+            std::printf("talker: step=%4u  x=%+.2f y=%+.2f heading=%+.2f\n",
+                        step, pose.x, pose.y, pose.heading);
         ++step;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
-    pub.close();
+    sb::shutdown();
     std::printf("talker: stopped (%u steps published)\n", step);
     return 0;
 }

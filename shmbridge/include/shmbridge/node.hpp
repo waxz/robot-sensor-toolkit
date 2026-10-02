@@ -49,6 +49,7 @@
 #include "shmbridge/topic.hpp"
 
 #include <chrono>
+#include <cstdio>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -229,7 +230,41 @@ struct SubSlot {
     int64_t                 last_attach_try_ns{0};
     std::function<void()>   poll_fn;      /* drain or read_if_new; calls user cb */
     std::function<bool()>   try_attach;   /* non-blocking attempt (timeout=0)   */
+    /* Ring subscriptions only (empty/unset for seqlock ones): §5.8's
+     * resilient-loop case 2 -- detects a closed publisher (e.g. a sensor
+     * node restarting) and performs the mandatory full detach() so the
+     * next spin_once() re-attaches from scratch via try_attach() above,
+     * instead of leaking a stale cursor against whatever reopens the
+     * topic. A restarted publisher's start_idx/end_idx sequence numbers
+     * mean nothing against the old cursor (§5.8), so this is correctness-
+     * critical, not an optimization. */
+    std::function<bool()>   is_closed;
+    std::function<void()>   detach;
+    /* §5.8's rate-limited warning (both cases: repeated attach failure,
+     * and a closed publisher triggering the detach above). Defaults to
+     * RingConfig::warn_every_ms's own default (2000ms); a ring
+     * subscription's create_subscription()/create_latest() call site
+     * overrides it from its resolved RingConfig if that ever threads a
+     * non-default value through. Shared by seqlock slots too (at the
+     * default) since "no publisher yet" applies equally to both. */
+    double                  warn_every_ms{2000.0};
+    int64_t                 last_warn_ns{0};
 };
+
+/* Emits a "[shmbridge] <msg>" warning to stderr, at most once per
+ * slot.warn_every_ms -- the mechanism §5.8 documents but, until now,
+ * nothing in this codebase actually implemented (RingConfig::warn_every_ms
+ * resolved from TOML correctly but had no consumer). Plain stderr,
+ * matching this project's one existing diagnostic-message convention
+ * (CMakeLists.txt's "[shmbridge] ..." configure-time messages) rather
+ * than inventing a callback or counter API with no precedent to justify
+ * the extra surface. */
+inline void warn_rate_limited(SubSlot& slot, int64_t now_ns, const std::string& msg) noexcept {
+    const int64_t interval_ns = static_cast<int64_t>(slot.warn_every_ms * 1e6);
+    if (slot.last_warn_ns != 0 && now_ns - slot.last_warn_ns < interval_ns) return;
+    slot.last_warn_ns = now_ns;
+    std::fprintf(stderr, "[shmbridge] %s\n", msg.c_str());
+}
 
 } /* namespace detail */
 
@@ -277,7 +312,15 @@ public:
             seqlock_pubs_[topic] = sp;   /* keep alive */
         } else {
             rp = std::make_shared<shmbridge::RingPublisher<T>>();
-            if (!rp->open(topic.c_str()))
+            /* RingConfig::capacity has no compile-time N any more (§12) --
+             * drive it from the requested QoS depth, rounded up to the
+             * power-of-two open() requires, rather than leaving every
+             * topic on the generic built-in default regardless of what
+             * QoS asked for. */
+            shmbridge::RingConfig ring_cfg;
+            ring_cfg.capacity = shmbridge::detail::ring_next_pow2(
+                qos.depth() >= 2 ? qos.depth() : 2u);
+            if (!rp->open(topic.c_str(), ring_cfg))
                 throw std::runtime_error("shmbridge: failed to open ring publisher for " + topic);
             ring_pubs_[topic] = rp;      /* keep alive */
         }
@@ -345,17 +388,30 @@ public:
         } else {
             auto sub     = std::make_shared<shmbridge::RingSubscriber<T>>();
             auto cb_copy = std::function<void(const T&)>(std::forward<CB>(cb));
-            slot.try_attach = [sub, topic]() -> bool {
-                return sub->attach(topic.c_str(), 0);
+            /* DrainBacklog, not the new default StartNow: attach is lazy
+             * (spin_once() attaches on its first opportunity, which can be
+             * well after create_subscription() returns), and node.hpp's
+             * historical observable behavior let a subscriber created
+             * after messages were already published still see whatever
+             * was still sitting in the ring -- the closest match the new
+             * per-consumer-cursor design (F-2) has to the old shared
+             * read_idx a late subscriber used to inherit for free. */
+            shmbridge::RingConfig ring_cfg;
+            ring_cfg.cursor_mode = shmbridge::RingCursorMode::DrainBacklog;
+            slot.try_attach = [sub, topic, ring_cfg]() -> bool {
+                return sub->try_attach(topic.c_str(), ring_cfg);
             };
-            /* Enforce backlog limit before draining: if the subscriber is
-             * slower than the publisher, skip_old() advances read_idx past
-             * stale messages so the ring never stays full and the publisher
-             * never silently drops new writes due to overflow. */
-            slot.poll_fn = [sub, cb_copy, keep_n = qos.depth()]() {
-                sub->skip_old(keep_n);
-                sub->drain([&](const T& msg) { cb_copy(msg); });
+            /* No explicit backlog cap needed before draining any more: the
+             * ring itself is overwrite-on-full (F-1) and a lagging
+             * consumer's cursor silently resyncs to start_idx on its next
+             * read (§5.7) -- drain_ex() bounds itself to a single snapshot
+             * of end_idx so a concurrently-publishing producer can't make
+             * this loop unbounded. */
+            slot.poll_fn = [sub, cb_copy]() {
+                sub->drain_ex([&cb_copy](const T& msg, uint64_t /*write_ns*/) { cb_copy(msg); });
             };
+            slot.is_closed = [sub]() -> bool { return sub->is_closed(); };
+            slot.detach    = [sub]() { sub->detach(); };
             ring_subs_[topic] = sub;
         }
 
@@ -420,18 +476,29 @@ public:
         }
 
         /* Ring path: custom poll_fn uses pop_latest() to skip the backlog
-         * and take only the single newest item in O(1). */
+         * and take only the single newest item in O(1). DrainBacklog (not
+         * the new default StartNow) so a subscriber attaching after
+         * messages were already published still finds a current value to
+         * jump to -- StartNow would start the cursor at end_idx, leaving
+         * pop_latest() with nothing to return until the *next* publish
+         * even though a perfectly good "current" value already exists. */
         auto raw_sub = std::make_shared<shmbridge::RingSubscriber<T>>();
+        shmbridge::RingConfig ring_cfg;
+        ring_cfg.cursor_mode = shmbridge::RingCursorMode::DrainBacklog;
 
         detail::SubSlot sub_slot;
         sub_slot.topic       = topic;
         sub_slot.keep_latest = false;
-        sub_slot.try_attach  = [raw_sub, topic]() -> bool {
-            return raw_sub->attach(topic.c_str(), 0);
+        sub_slot.try_attach  = [raw_sub, topic, ring_cfg]() -> bool {
+            return raw_sub->try_attach(topic.c_str(), ring_cfg);
         };
         sub_slot.poll_fn = [raw_sub, slot_ptr]() {
-            if (auto item = raw_sub->pop_latest()) slot_ptr->store(*item);
+            /* pop_latest() returns Result<T> (value + write_ns), not T
+             * directly -- store() only wants the payload. */
+            if (auto item = raw_sub->pop_latest()) slot_ptr->store(item->value);
         };
+        sub_slot.is_closed = [raw_sub]() -> bool { return raw_sub->is_closed(); };
+        sub_slot.detach    = [raw_sub]() { raw_sub->detach(); };
         ring_subs_[topic] = raw_sub;
 
         sub_topics_.push_back(topic);
@@ -463,10 +530,34 @@ public:
                 if (now - slot.last_attach_try_ns >= ATTACH_RETRY_NS) {
                     slot.last_attach_try_ns = now;
                     slot.attached = slot.try_attach();
+                    /* §5.8 resilient-loop case 1's rate-limited warning:
+                     * "not found yet" is expected and transient on its own
+                     * (try_attach() never throws for it), but a subscriber
+                     * that NEVER finds its publisher is worth surfacing
+                     * rather than staying silently stuck forever. */
+                    if (!slot.attached) {
+                        detail::warn_rate_limited(slot, now,
+                            "subscription to '" + slot.topic + "' has no publisher yet, still waiting");
+                    }
                 }
             }
             if (slot.attached) {
                 slot.poll_fn();
+                /* §5.8 resilient-loop case 2 (ring subscriptions only --
+                 * is_closed is unset/empty for seqlock ones): a closed
+                 * publisher (e.g. a sensor node restarting) must trigger a
+                 * full detach() now so the next spin_once() re-attaches
+                 * from scratch via try_attach() above, respecting the same
+                 * ATTACH_RETRY_NS throttle as a first-time attach. Clearing
+                 * just the `attached` flag without detach() would leak the
+                 * old mapping and let a stray cursor misread whatever
+                 * reopens the topic. */
+                if (slot.is_closed && slot.is_closed()) {
+                    detail::warn_rate_limited(slot, now,
+                        "subscription to '" + slot.topic + "' observed its publisher close; re-attaching");
+                    slot.detach();
+                    slot.attached = false;
+                }
             }
         }
     }

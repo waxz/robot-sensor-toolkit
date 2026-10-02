@@ -36,7 +36,28 @@
 #include <string>
 
 /* ── arch fences (same as core.hpp) ─────────────────────────────────────── */
-#if defined(__x86_64__) || defined(_M_X64)
+/*
+ * NOTE: the __x86_64__/_M_X64 split below matters: __x86_64__ is a
+ * GCC/Clang-only macro (never defined by MSVC), while _M_X64 is
+ * MSVC-only -- they must stay in separate branches. A previous version of
+ * this file OR'd _M_X64 into the first (GCC/Clang inline-asm) branch,
+ * which made MSVC's x64 builds try to compile `__asm__ volatile(...)`
+ * (GNU inline-asm syntax) -- something MSVC doesn't support at all in
+ * x64 mode, for any dialect -- so that bug was a guaranteed compile
+ * failure the moment anything using this header was built with MSVC,
+ * never just a latent risk.
+ *
+ * The outer #ifndef _SB_FENCE_W guard lets this header coexist with
+ * core.hpp in the same translation unit (e.g. ext_core.hpp + ext_topics.hpp
+ * both included from py_bindings.cpp): core.hpp defines the same three
+ * macro names with its own (also architecture-correct) implementation, and
+ * without this guard a TU that includes both gets duplicate, non-identical
+ * macro definitions -- whichever header is included first wins; either
+ * implementation is a correct fence/pause for the target, so it doesn't
+ * matter which.
+ */
+#ifndef _SB_FENCE_W
+#if defined(__x86_64__)
 #  define _SB_FENCE_W()  __asm__ volatile("" ::: "memory")
 #  define _SB_FENCE_R()  __asm__ volatile("" ::: "memory")
 #  define _SB_PAUSE()    __asm__ volatile("pause" ::: "memory")
@@ -53,6 +74,7 @@
 #  define _SB_FENCE_R()  std::atomic_thread_fence(std::memory_order_acquire)
 #  define _SB_PAUSE()    ((void)0)
 #endif
+#endif /* _SB_FENCE_W */
 
 namespace shmbridge {
 
@@ -67,15 +89,32 @@ constexpr uint64_t fnv1a_const(const char* s, uint64_t h = 0xcbf29ce484222325ULL
         (h ^ static_cast<uint64_t>(static_cast<unsigned char>(*s))) * 0x100000001b3ULL);
 }
 
+/* Guarded so this coexists with core.hpp's identical detail::now_ns() in
+ * the same translation unit — see core.hpp's matching comment. */
+#ifndef SHMBRIDGE_DETAIL_NOW_NS_DEFINED
+#define SHMBRIDGE_DETAIL_NOW_NS_DEFINED
 inline uint64_t now_ns() noexcept { return platform::now_ns(); }
+#endif
 
 } /* namespace detail */
+
+/* __PRETTY_FUNCTION__ is GCC/Clang-only; MSVC's equivalent compiler-magic
+ * string (also substituted at compile time, also usable here) is
+ * __FUNCSIG__. Without this, type_id<T>() -- and therefore every
+ * Publisher<T>/Subscriber<T> instantiation -- fails to compile under MSVC
+ * at all (a hard error, not a behavior difference), since __PRETTY_FUNCTION__
+ * is simply undeclared there. */
+#if defined(_MSC_VER) && !defined(__clang__)
+#  define SHMBRIDGE_PRETTY_FUNC __FUNCSIG__
+#else
+#  define SHMBRIDGE_PRETTY_FUNC __PRETTY_FUNCTION__
+#endif
 
 /* Returns a stable 64-bit hash that identifies type T within a compilation
  * unit. Use this to detect publisher/subscriber type mismatches at attach(). */
 template<typename T>
 constexpr uint64_t type_id() noexcept {
-    return detail::fnv1a_const(__PRETTY_FUNCTION__);
+    return detail::fnv1a_const(SHMBRIDGE_PRETTY_FUNC);
 }
 
 /* ── shared-memory layout ────────────────────────────────────────────────── */
@@ -243,12 +282,15 @@ public:
         _SB_FENCE_W();
         hdr->ready = 1;
 
+        platform::notify_bind(to_shm_name(name), &hdr->notify_seq);
+
         seq_ctr_ = 0;
         return TopicError::Ok;
     }
 
     void close() noexcept {
         if (!base_) return;
+        platform::notify_unbind(&header()->notify_seq);
         platform::shm_unmap(base_, topic_shm_size<T>());
         base_ = nullptr;
         platform::shm_destroy(to_shm_name(name_));
@@ -360,12 +402,15 @@ public:
         if (header()->type_hash != type_id<T>()) return TopicError::TypeMismatch;
         if (header()->sizeof_T  != sizeof(T))    return TopicError::SizeMismatch;
 
+        platform::notify_bind(to_shm_name(name), &header()->notify_seq);
+
         last_write_ns_ = 0;
         return TopicError::Ok;
     }
 
     void detach() noexcept {
         if (!base_) return;
+        platform::notify_unbind(&header()->notify_seq);
         platform::shm_unmap(base_, topic_shm_size<T>());
         base_ = nullptr;
         name_.clear();

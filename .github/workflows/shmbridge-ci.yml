@@ -1,0 +1,116 @@
+name: shmbridge CI
+
+# shmbridge's design doc (docs/design_ring_zero_copy.md §15 phase 9) deferred
+# hosted CI in favor of local dual-toolchain verification (native Windows +
+# WSL Ubuntu) for its implementation pass, with "add a .github/workflows/
+# pipeline" explicitly left as the next reasonable step. This is that step:
+# the same two toolchains (native Windows/MSVC, Ubuntu/GCC), running the same
+# commands shmbridge/README.md documents for local verification, so CI and
+# the README can't silently drift apart.
+#
+# Two concerns, two job groups:
+#   - cpp-*     : the header-only C++ library's own test suite (test_ring/
+#                 test_migration/test_topic via ctest), independent of Python.
+#   - python    : the compiled pybind11 extension is mandatory for the Python
+#                 package (no ctypes fallback) -- `pip install -e .[dev]` must
+#                 build it, and the pytest suite exercises the public API
+#                 through it.
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - "shmbridge/**"
+      - ".github/workflows/shmbridge-ci.yml"
+  pull_request:
+    paths:
+      - "shmbridge/**"
+      - ".github/workflows/shmbridge-ci.yml"
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: shmbridge
+
+env:
+  GTEST_TAG: v1.14.0
+
+jobs:
+  # ── C++ library: Ubuntu/GCC ────────────────────────────────────────────────
+  cpp-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and install GoogleTest
+        run: |
+          git clone --depth 1 --branch "${GTEST_TAG}" https://github.com/google/googletest.git "${{ runner.temp }}/googletest"
+          cmake -S "${{ runner.temp }}/googletest" -B "${{ runner.temp }}/gtest_build" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "${{ runner.temp }}/gtest_build" -j"$(nproc)"
+          cmake --install "${{ runner.temp }}/gtest_build" --prefix "${{ runner.temp }}/gtest_install"
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          -DSHMBRIDGE_BUILD_TESTS=ON -DSHMBRIDGE_BUILD_BENCH=ON
+          -DCMAKE_PREFIX_PATH="${{ runner.temp }}/gtest_install"
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Run ctest (test_ring, test_migration, test_topic, test_core)
+        run: ctest --test-dir build --output-on-failure
+
+  # ── C++ library: native Windows/MSVC ───────────────────────────────────────
+  cpp-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and install GoogleTest
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch $env:GTEST_TAG https://github.com/google/googletest.git "${{ runner.temp }}\googletest"
+          cmake -S "${{ runner.temp }}\googletest" -B "${{ runner.temp }}\gtest_build"
+          cmake --build "${{ runner.temp }}\gtest_build" --config Release
+          cmake --install "${{ runner.temp }}\gtest_build" --prefix "${{ runner.temp }}\gtest_install" --config Release
+
+      - name: Configure
+        # No -G: the default Visual Studio generator locates MSVC itself
+        # regardless of shell (see README.md's Build section for why -G
+        # Ninja is deliberately NOT used here). CMAKE_PREFIX_PATH must be
+        # absolute -- a relative path silently fails GTest's config-mode
+        # lookup on Windows (same finding as README.md's Build section).
+        shell: pwsh
+        run: >
+          cmake -S . -B build
+          -DSHMBRIDGE_BUILD_TESTS=ON -DSHMBRIDGE_BUILD_BENCH=ON
+          -DCMAKE_PREFIX_PATH="${{ runner.temp }}\gtest_install"
+          -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Run ctest (test_ring, test_migration, test_topic)
+        run: ctest --test-dir build -C Release --output-on-failure
+
+  # ── Python package (mandatory compiled _core extension) ───────────────────
+  python:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install shmbridge (builds shmbridge._core)
+        run: pip install -v -e .[dev]
+
+      - name: Run pytest
+        run: pytest tests/test_shmbridge.py -v

@@ -10,6 +10,7 @@
  */
 
 #pragma once
+#include <cstddef>
 #include <cstdint>
 
 namespace shmbridge::msg {
@@ -112,5 +113,52 @@ struct OccupancyMap {
     /* payload: int8_t[width*height] stored separately via BulkPublisher */
 };
 static_assert(sizeof(OccupancyMap) == 40);
+
+/*
+ * Fixed-size point-cloud family for the ring transport (F-12; see
+ * docs/design_ring_zero_copy.md §5.11). Each instantiation is a complete,
+ * trivially-copyable T usable directly as RingPublisher<T>/
+ * RingSubscriber<T> -- unlike PointCloud above, which is a small header
+ * paired with a separately-stored bulk payload for the older BulkTopic
+ * transport. A publisher picks the smallest variant that comfortably
+ * covers its topic's actual point count and only fills n_points of the
+ * full MaxPoints capacity on most messages; a reader processes n_points
+ * entries, not the full MaxPoints. Every MaxPoints value gets its own
+ * type_hash (topic.hpp's type_id<T>() hashes __PRETTY_FUNCTION__/
+ * __FUNCSIG__, which includes template arguments), so a
+ * RingSubscriber<PointCloudFixed<256>> attaching to a
+ * PointCloudFixed<4096> topic is rejected as a type mismatch like any
+ * other T mismatch -- no new validation logic needed.
+ *
+ * Capacity footgun: RingConfig::capacity's default (64) is not
+ * payload-size-aware. A PointCloudFixed<4096> topic opened without
+ * overriding cfg.capacity gets a 4 MiB segment (64 slots x 64 KiB), not
+ * the few-hundred-KiB that a latest-only topic typically needs -- set
+ * cfg.capacity explicitly per topic rather than relying on the default.
+ *
+ * Stack footgun for the larger variants (PointCloud16384/PointCloud65536,
+ * ~256 KiB/~1 MiB): don't read one via RingSubscriber<T>::pop_ex()/
+ * pop_latest() -- both return Result<T> by value, a full T as a stack-
+ * local inside ring.hpp, which can overflow a small default thread stack
+ * (Windows: 1 MiB) for these sizes. Use borrow()/end_borrow() instead
+ * (see ring.hpp's own note on pop_latest()); ext_topics.hpp's
+ * PointCloudSubscriber does exactly this.
+ */
+template <size_t MaxPoints>
+struct PointCloudFixed {
+    uint32_t n_points = 0;              /* actual count published this message, <= MaxPoints */
+    uint32_t _pad = 0;
+    double   ts = 0;                    /* caller-supplied timestamp (e.g. sim time, seconds) */
+    float    points[MaxPoints][4] = {}; /* x, y, z, intensity */
+};
+
+using PointCloud64    = PointCloudFixed<64>;     //  ~1 KiB
+using PointCloud256   = PointCloudFixed<256>;    //  ~4 KiB
+using PointCloud1024  = PointCloudFixed<1024>;   // ~16 KiB
+using PointCloud4096  = PointCloudFixed<4096>;   // ~64 KiB
+using PointCloud16384 = PointCloudFixed<16384>;  // ~256 KiB
+using PointCloud65536 = PointCloudFixed<65536>;  // ~1 MiB, matches the
+                                                   // existing bespoke
+                                                   // transport's cap
 
 } /* namespace shmbridge::msg */

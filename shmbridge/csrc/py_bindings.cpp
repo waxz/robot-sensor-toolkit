@@ -12,6 +12,8 @@
 #include <pybind11/stl.h>
 
 #include <shmbridge/core.hpp>
+#include <shmbridge/ext_core.hpp>
+#include <shmbridge/ext_topics.hpp>
 #include <shmbridge/spin_sleep.hpp>
 #include <shmbridge/scheduler.hpp>
 
@@ -189,6 +191,297 @@ PYBIND11_MODULE(_core, m) {
              py::arg("max_age_ms") = 100.0, py::arg("robot_idx") = 0u)
         .def_property_readonly("n_robots",    &ShmSubscriber::n_robots)
         .def_property_readonly("n_consumers", &ShmSubscriber::n_consumers);
+
+    /* ── ImuSample / EncoderSample / PcHeaderSample / TopicInfo ───────────── */
+    py::class_<ImuSample>(m, "ImuSample")
+        .def(py::init<>())
+        .def_readwrite("ax", &ImuSample::ax)
+        .def_readwrite("ay", &ImuSample::ay)
+        .def_readwrite("az", &ImuSample::az)
+        .def_readwrite("gx", &ImuSample::gx)
+        .def_readwrite("gy", &ImuSample::gy)
+        .def_readwrite("gz", &ImuSample::gz)
+        .def_readwrite("mx", &ImuSample::mx)
+        .def_readwrite("my", &ImuSample::my)
+        .def_readwrite("mz", &ImuSample::mz)
+        .def_readwrite("ts", &ImuSample::ts);
+
+    py::class_<EncoderSample>(m, "EncoderSample")
+        .def(py::init<>())
+        .def_readwrite("ticks", &EncoderSample::ticks)
+        .def_readwrite("speed", &EncoderSample::speed)
+        .def_readwrite("ts",    &EncoderSample::ts);
+
+    py::class_<PcHeaderSample>(m, "PcHeaderSample")
+        .def(py::init<>())
+        .def_readwrite("n_points", &PcHeaderSample::n_points)
+        .def_readwrite("max_pts",  &PcHeaderSample::max_pts)
+        .def_readwrite("ts",       &PcHeaderSample::ts);
+
+    py::class_<TopicInfo>(m, "TopicInfo")
+        .def_readonly("name",  &TopicInfo::name)
+        .def_readonly("alive", &TopicInfo::alive)
+        .def_property_readonly("age_ms", [](const TopicInfo& t) -> py::object {
+            if (!t.has_age) return py::none();
+            return py::cast(t.age_ms);
+        })
+        .def("__repr__", [](const TopicInfo& t) {
+            return "<TopicInfo name='" + t.name + "' alive=" +
+                   (t.alive ? "True" : "False") + ">";
+        });
+
+    /* ── ExtShmBridge ──────────────────────────────────────────────────── */
+    py::class_<ExtShmBridge>(m, "ExtShmBridge",
+        R"doc(
+        State + cmd (as ShmPublisher/ShmSubscriber) plus IMU, encoder, and
+        point-cloud channels in one shm segment.
+
+        Single robot/consumer, single class for both roles: whichever side
+        calls open() creates the segment, whichever calls attach() maps an
+        existing one. Either side may read or write any channel.
+
+        Parameters
+        ----------
+        name : str
+            POSIX shm name (default "/shmbridge_ext_v2").
+        )doc")
+        .def(py::init<std::string>(), py::arg("name") = EXT_SHM_NAME_DEFAULT)
+        .def("open",  &ExtShmBridge::open,  "Create and zero-init the shm segment.")
+        .def("close", &ExtShmBridge::close, "Unmap and unlink the segment.")
+        .def("is_open", &ExtShmBridge::is_open)
+        .def("attach", &ExtShmBridge::attach, py::arg("timeout_ms") = 30000.0,
+             "Attach to an existing segment; retries if publisher not started "
+             "yet. Raises ValueError on a schema/magic mismatch.")
+        .def("detach", &ExtShmBridge::detach)
+        .def("is_attached", &ExtShmBridge::is_attached)
+        .def("__enter__", [](ExtShmBridge& self) -> ExtShmBridge& {
+            self.open(); return self;
+        })
+        .def("__exit__", [](ExtShmBridge& self, py::object, py::object,
+                             py::object) { self.close(); })
+        .def("write_state", &ExtShmBridge::write_state, py::arg("state"),
+             "Seqlock-write robot state from a RobotState object.")
+        .def("write_state_fields",
+             [](ExtShmBridge& self, double x, double y, double heading,
+                float vx, float vy, float omega, float goal_x, float goal_y,
+                float goal_dist, uint64_t step, double sim_time,
+                bool reached, bool collision) {
+                 RobotState s;
+                 s.x = x; s.y = y; s.heading = heading;
+                 s.vx = vx; s.vy = vy; s.omega = omega;
+                 s.goal_x = goal_x; s.goal_y = goal_y; s.goal_dist = goal_dist;
+                 s.step = step; s.sim_time = sim_time;
+                 s.reached = reached; s.collision = collision;
+                 self.write_state(s);
+             },
+             py::arg("x"), py::arg("y"), py::arg("heading"),
+             py::arg("vx"), py::arg("vy"), py::arg("omega"),
+             py::arg("goal_x"), py::arg("goal_y"), py::arg("goal_dist"),
+             py::arg("step"), py::arg("sim_time"),
+             py::arg("reached") = false, py::arg("collision") = false,
+             "Seqlock-write robot state from flat args — builds the "
+             "RobotState on the C++ side of the boundary instead of the "
+             "caller constructing one field-by-field first (that "
+             "construction, not the write itself, was the dominant cost: "
+             "~2.3us for 11 pybind11 attribute setters vs ~0.2us for the "
+             "actual seqlock write).")
+        .def("read_state", &ExtShmBridge::read_state,
+             "Seqlock read; returns RobotState or None on torn read / no data.")
+        .def("write_cmd", &ExtShmBridge::write_cmd,
+             py::arg("linear"), py::arg("angular"),
+             "Seqlock-write a velocity command.")
+        .def("read_cmd", &ExtShmBridge::read_cmd,
+             "Non-blocking seqlock read. Returns None if mid-write or no "
+             "valid cmd.")
+        .def("write_imu", &ExtShmBridge::write_imu,
+             py::arg("ax"), py::arg("ay"), py::arg("az"),
+             py::arg("gx"), py::arg("gy"), py::arg("gz"),
+             py::arg("mx") = 0.f, py::arg("my") = 0.f, py::arg("mz") = 0.f,
+             py::arg("ts") = 0.f)
+        .def("read_imu", &ExtShmBridge::read_imu)
+        .def("write_encoder",
+             [](ExtShmBridge& self, std::array<int32_t, 4> ticks,
+                std::array<float, 4> speeds, float ts) {
+                 self.write_encoder(ticks, speeds, ts);
+             },
+             py::arg("ticks"), py::arg("speeds"), py::arg("ts") = 0.f)
+        .def("read_encoder", &ExtShmBridge::read_encoder)
+        .def("write_pointcloud",
+             [](ExtShmBridge& self, py::buffer points, double ts) {
+                 py::buffer_info info = points.request();
+                 if (info.itemsize != sizeof(float)) {
+                     throw std::invalid_argument(
+                         "write_pointcloud expects a float32 buffer");
+                 }
+                 size_t total = 1;
+                 for (auto d : info.shape) total *= static_cast<size_t>(d);
+                 if (info.shape.empty()) total = static_cast<size_t>(info.size);
+                 self.write_pointcloud(static_cast<const float*>(info.ptr),
+                                       total / 4, ts);
+             },
+             py::arg("points"), py::arg("ts") = 0.0,
+             "Write N points (x, y, z, intensity float32 each) from any "
+             "buffer-protocol object (numpy array, memoryview, ...).")
+        .def("read_pointcloud_bytes",
+             [](const ExtShmBridge& self) -> py::object {
+                 std::vector<float> buf(EXT_PC_MAX_POINTS * 4);
+                 size_t n = self.read_pointcloud(buf.data());
+                 if (n == 0) return py::none();
+                 return py::bytes(reinterpret_cast<const char*>(buf.data()),
+                                   n * EXT_PC_POINT_BYTES);
+             },
+             "Raw (N*16)-byte float32 payload [x,y,z,intensity]*N, or None. "
+             "The Python ExtShmBridge wrapper turns this into an (N,4) "
+             "ndarray — kept as raw bytes here so this extension has no "
+             "numpy build dependency.")
+        .def("read_pointcloud_header", &ExtShmBridge::read_pointcloud_header)
+        .def("write_channel",
+             [](ExtShmBridge& self, const std::string& name, py::buffer data) {
+                 py::buffer_info info = data.request();
+                 self.write_channel(name, info.ptr,
+                                     static_cast<size_t>(info.size) * info.itemsize);
+             },
+             py::arg("name"), py::arg("data"),
+             "Seqlock-write raw bytes to a generic named user channel — see "
+             "shmbridge.message.Channel for a struct.pack/unpack layer on "
+             "top of this. Claims a free slot (of a fixed "
+             "EXT_N_USER_CHANNELS pool) the first time `name` is used.")
+        .def("read_channel",
+             [](ExtShmBridge& self, const std::string& name) -> py::object {
+                 std::array<uint8_t, EXT_USER_CHANNEL_PAYLOAD_BYTES> buf{};
+                 if (!self.read_channel(name, buf.data())) return py::none();
+                 return py::bytes(reinterpret_cast<const char*>(buf.data()),
+                                   buf.size());
+             },
+             py::arg("name"),
+             "Seqlock read of a generic named user channel's raw "
+             "EXT_USER_CHANNEL_PAYLOAD_BYTES-byte payload, or None if the "
+             "channel doesn't exist yet or the read was torn.")
+        .def("is_imu_alive", &ExtShmBridge::is_imu_alive,
+             py::arg("max_age_ms") = 100.0)
+        .def("is_pointcloud_alive", &ExtShmBridge::is_pointcloud_alive,
+             py::arg("max_age_ms") = 100.0)
+        .def("list_topics", &ExtShmBridge::list_topics,
+             py::arg("max_age_ms") = 300.0,
+             "Enumerate every channel (state/cmd/imu/encoder/pointcloud, "
+             "plus any claimed user channels) with liveness info.");
+
+    /* ── Independent per-topic primitives (ext_topics.hpp) ────────────────
+     *
+     * Each of these is its own shm segment: a completely separate node/
+     * process can publish (or subscribe to) just this one topic, without
+     * ExtShmBridge's combined segment existing at all — see
+     * ext_topics.hpp's own header comment for why this exists alongside
+     * ExtShmBridge rather than replacing it outright. */
+
+    auto raise_topic_error = [](TopicError err) {
+        switch (err) {
+            case TopicError::Ok:
+                return;
+            case TopicError::Timeout:
+            case TopicError::NotReady:
+                throw std::runtime_error(
+                    "attach timeout: topic not found or publisher not ready");
+            case TopicError::TypeMismatch:
+            case TopicError::SizeMismatch:
+                throw std::invalid_argument(
+                    "topic type/size mismatch — publisher and subscriber "
+                    "disagree on the message type");
+            case TopicError::ShmFailed:
+                throw std::runtime_error("shared-memory operation failed");
+        }
+    };
+
+    // NOTE: no ImuPublisher/ImuSubscriber/EncoderPublisher/EncoderSubscriber
+    // classes here (a previous revision had them as thin aliases over
+    // Publisher<ShmImu>/Subscriber<ShmImu> etc.) — that's exactly the
+    // per-message-type duplication the generic RawChannelPublisher/
+    // RawChannelSubscriber below (plus a message *definition*, not a new
+    // class, on the Python side — see shmbridge.message.Publisher/
+    // Subscriber and urdf_tools.pubsub) exists to avoid, ROS-style. A C++
+    // node that wants a real typed message can instantiate
+    // shmbridge::Publisher<ShmImu>/Subscriber<ShmImu> (from topic.hpp)
+    // directly; see ext_topics.hpp's header comment.
+
+    py::class_<RawChannelPublisher>(m, "RawChannelPublisher",
+        "Independent custom-message topic (own shm segment, unlimited "
+        "distinct names) — Publisher<RawMsg88>. Backs "
+        "shmbridge.message.Channel's struct.pack/unpack layer when a "
+        "channel is run as its own node rather than through ExtShmBridge's "
+        "fixed 8-slot pool.")
+        .def(py::init<uint32_t>(), py::arg("heartbeat_every") = 1u)
+        .def("open", [raise_topic_error](RawChannelPublisher& self, const std::string& name) {
+            raise_topic_error(self.open(name));
+        }, py::arg("name"))
+        .def("close", &RawChannelPublisher::close)
+        .def("is_open", &RawChannelPublisher::is_open)
+        .def("write", [](RawChannelPublisher& self, py::bytes data) {
+            std::string s = data;
+            RawMsg88 msg{};
+            std::memcpy(msg.data, s.data(), std::min(s.size(), sizeof(msg.data)));
+            self.write(msg);
+        }, py::arg("data"));
+
+    py::class_<RawChannelSubscriber>(m, "RawChannelSubscriber",
+        "Independent custom-message topic subscriber — Subscriber<RawMsg88>.")
+        .def(py::init<>())
+        .def("attach", [raise_topic_error](RawChannelSubscriber& self,
+                                            const std::string& name, int timeout_ms) {
+            raise_topic_error(self.attach(name, timeout_ms));
+        }, py::arg("name"), py::arg("timeout_ms") = 5000)
+        .def("detach", &RawChannelSubscriber::detach)
+        .def("is_attached", &RawChannelSubscriber::is_attached)
+        .def("read", [](RawChannelSubscriber& self) -> py::object {
+            auto r = self.spin();
+            if (!r || r->write_ns == 0) return py::none();  // see ImuSubscriber::read
+            return py::bytes(reinterpret_cast<const char*>(r->value.data),
+                              sizeof(r->value.data));
+        })
+        .def("is_publisher_alive", &RawChannelSubscriber::is_publisher_alive,
+             py::arg("max_age_ms") = 500.0);
+
+    py::class_<PointCloudPublisher>(m, "PointCloudPublisher",
+        "Independent point-cloud topic (own shm segment) — bespoke bulk "
+        "pair, since topic.hpp's SeqlockSlot<T> caps at 104 B and a cloud "
+        "can be up to 1 MiB.")
+        .def(py::init<>())
+        .def("open", &PointCloudPublisher::open, py::arg("name"))
+        .def("close", &PointCloudPublisher::close)
+        .def("is_open", &PointCloudPublisher::is_open)
+        .def("write", [](PointCloudPublisher& self, py::buffer points, double ts) {
+            py::buffer_info info = points.request();
+            if (info.itemsize != sizeof(float)) {
+                throw std::invalid_argument("write expects a float32 buffer");
+            }
+            size_t total = info.shape.empty() ? static_cast<size_t>(info.size) : 1;
+            for (auto d : info.shape) total *= static_cast<size_t>(d);
+            self.write(static_cast<const float*>(info.ptr), total / 4, ts);
+        }, py::arg("points"), py::arg("ts") = 0.0);
+
+    py::class_<PointCloudSubscriber>(m, "PointCloudSubscriber",
+        "Independent point-cloud topic subscriber.")
+        .def(py::init<>())
+        .def("attach", &PointCloudSubscriber::attach,
+             py::arg("name"), py::arg("timeout_ms") = 30000.0)
+        .def("detach", &PointCloudSubscriber::detach)
+        .def("is_attached", &PointCloudSubscriber::is_attached)
+        .def("read_bytes", [](const PointCloudSubscriber& self) -> py::object {
+            // Scratch buffer sized for the worst case (PC_TOPIC_MAX_POINTS),
+            // but allocated+zero-filled only once per thread rather than on
+            // every call -- a fresh std::vector here cost ~200-300us/call
+            // regardless of the actual point count (measured via
+            // tests/bench_pubsub_matrix.py), dwarfing the real memcpy cost
+            // for any cloud smaller than the 1 MiB max.
+            static thread_local std::vector<float> buf(PC_TOPIC_MAX_POINTS * 4);
+            size_t n = self.read(buf.data());
+            if (n == 0) return py::none();
+            return py::bytes(reinterpret_cast<const char*>(buf.data()), n * PC_TOPIC_POINT_BYTES);
+        }, "Raw (N*16)-byte float32 payload [x,y,z,intensity]*N, or None — "
+           "kept as raw bytes here so this extension has no numpy build "
+           "dependency (mirrors ExtShmBridge.read_pointcloud_bytes).")
+        .def("read_header", &PointCloudSubscriber::read_header)
+        .def("is_publisher_alive", &PointCloudSubscriber::is_publisher_alive,
+             py::arg("max_age_ms") = 100.0);
 
     /* ── spin_sleep utilities ──────────────────────────────────────────── */
     m.def("spin_sleep_us", &spin_sleep_us, py::arg("us"),

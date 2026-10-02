@@ -4,3 +4,11 @@ __pycache__/
 *.egg-info/
 *.so
 *.pyc
+
+# MSVC build/debug artifacts (e.g. tests/msvc_asan_probe.* from a manual
+# sanitizer verification run, vc140.pdb from any local MSVC build)
+*.pdb
+*.exe
+*.obj
+*.lib
+*.exp

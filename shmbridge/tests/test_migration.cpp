@@ -28,63 +28,79 @@ TEST(RingHeader, Exactly64Bytes) {
 
 TEST(Ring, BasicPushPop) {
     const char* topic = "test_ring_basic";
-    ::shm_unlink("/sbr_test_ring_basic");
+    platform::shm_destroy("/sbr_test_ring_basic");
 
-    RingPublisher<Pose2d, 8> pub;
-    ASSERT_TRUE(pub.open(topic));
+    RingConfig cfg; cfg.capacity = 8;
+    RingPublisher<Pose2d> pub;
+    ASSERT_TRUE(pub.open(topic, cfg));
 
-    RingSubscriber<Pose2d, 8> sub;
-    ASSERT_TRUE(sub.attach(topic, 1000));
+    RingSubscriber<Pose2d> sub;
+    ASSERT_TRUE(sub.try_attach(topic, cfg));
 
     Pose2d msg{1.0, 2.0, 0.5, 100};
     EXPECT_TRUE(pub.push(msg));
 
-    auto got = sub.pop();
+    auto got = sub.pop_ex();
     ASSERT_TRUE(got.has_value());
-    EXPECT_DOUBLE_EQ(got->x, 1.0);
-    EXPECT_DOUBLE_EQ(got->y, 2.0);
-    EXPECT_DOUBLE_EQ(got->heading, 0.5);
-    EXPECT_EQ(got->stamp_ns, 100u);
+    EXPECT_DOUBLE_EQ(got->value.x, 1.0);
+    EXPECT_DOUBLE_EQ(got->value.y, 2.0);
+    EXPECT_DOUBLE_EQ(got->value.heading, 0.5);
+    EXPECT_EQ(got->value.stamp_ns, 100u);
 }
 
 TEST(Ring, EmptyPop) {
     const char* topic = "test_ring_empty";
-    ::shm_unlink("/sbr_test_ring_empty");
+    platform::shm_destroy("/sbr_test_ring_empty");
 
-    RingPublisher<Pose2d, 4> pub;
-    ASSERT_TRUE(pub.open(topic));
+    RingConfig cfg; cfg.capacity = 4;
+    RingPublisher<Pose2d> pub;
+    ASSERT_TRUE(pub.open(topic, cfg));
 
-    RingSubscriber<Pose2d, 4> sub;
-    ASSERT_TRUE(sub.attach(topic, 1000));
+    RingSubscriber<Pose2d> sub;
+    ASSERT_TRUE(sub.try_attach(topic, cfg));
 
-    EXPECT_FALSE(sub.pop().has_value());
+    EXPECT_FALSE(sub.pop_ex().has_value());
 }
 
-TEST(Ring, FullDrops) {
+/*
+ * Renamed from the old reject-on-full "FullDrops" test: push() can no
+ * longer fail for "ring full" (F-1, §12 breaking-change list) -- the old
+ * reject-on-full contract this test asserted no longer exists by design,
+ * replaced by always-succeed/overwrite-on-full. This now checks the
+ * *new* contract instead of the removed one. Full overwrite/eviction
+ * correctness (that a reader resyncs to the oldest still-live slot) is
+ * covered in depth by tests/test_ring.cpp's
+ * RingBasic.OverflowEvictionResyncsToOldestLive; this test only confirms
+ * node.hpp's call sites see the new never-fails contract.
+ */
+TEST(Ring, PushPastCapacityNeverFails) {
     const char* topic = "test_ring_full";
-    ::shm_unlink("/sbr_test_ring_full");
+    platform::shm_destroy("/sbr_test_ring_full");
 
-    RingPublisher<Pose2d, 4> pub;
-    ASSERT_TRUE(pub.open(topic));
+    RingConfig cfg; cfg.capacity = 4;
+    RingPublisher<Pose2d> pub;
+    ASSERT_TRUE(pub.open(topic, cfg));
 
     Pose2d msg{};
     int pushed = 0;
     for (int i = 0; i < 8; ++i)
         if (pub.push(msg)) ++pushed;
 
-    /* Only 4 slots; should accept exactly 4 and drop the rest. */
-    EXPECT_EQ(pushed, 4);
+    /* Twice the capacity, all 8 pushes succeed -- overwrite-on-full,
+     * never reject-on-full. */
+    EXPECT_EQ(pushed, 8);
 }
 
 TEST(Ring, DrainCallback) {
     const char* topic = "test_ring_drain";
-    ::shm_unlink("/sbr_test_ring_drain");
+    platform::shm_destroy("/sbr_test_ring_drain");
 
-    RingPublisher<Twist, 8> pub;
-    ASSERT_TRUE(pub.open(topic));
+    RingConfig cfg; cfg.capacity = 8;
+    RingPublisher<Twist> pub;
+    ASSERT_TRUE(pub.open(topic, cfg));
 
-    RingSubscriber<Twist, 8> sub;
-    ASSERT_TRUE(sub.attach(topic, 1000));
+    RingSubscriber<Twist> sub;
+    ASSERT_TRUE(sub.try_attach(topic, cfg));
 
     for (int i = 0; i < 5; ++i) {
         Twist t{}; t.vx = static_cast<float>(i);
@@ -92,7 +108,7 @@ TEST(Ring, DrainCallback) {
     }
 
     std::vector<float> received;
-    sub.drain([&](const Twist& t) { received.push_back(t.vx); });
+    sub.drain_ex([&](const Twist& t, uint64_t /*write_ns*/) { received.push_back(t.vx); });
 
     ASSERT_EQ(received.size(), 5u);
     for (int i = 0; i < 5; ++i)
@@ -101,76 +117,122 @@ TEST(Ring, DrainCallback) {
 
 TEST(Ring, ClosedFlag) {
     const char* topic = "test_ring_closed";
-    ::shm_unlink("/sbr_test_ring_closed");
+    platform::shm_destroy("/sbr_test_ring_closed");
 
-    RingPublisher<Pose2d, 4> pub;
-    ASSERT_TRUE(pub.open(topic));
+    RingConfig cfg; cfg.capacity = 4;
+    RingPublisher<Pose2d> pub;
+    ASSERT_TRUE(pub.open(topic, cfg));
 
-    RingSubscriber<Pose2d, 4> sub;
-    ASSERT_TRUE(sub.attach(topic, 1000));
+    RingSubscriber<Pose2d> sub;
+    ASSERT_TRUE(sub.try_attach(topic, cfg));
 
     EXPECT_FALSE(sub.is_closed());
     pub.signal_closed();
     EXPECT_TRUE(sub.is_closed());
 }
 
-TEST(Ring, SizeAndPeek) {
-    const char* topic = "test_ring_size";
-    ::shm_unlink("/sbr_test_ring_size");
+/*
+ * The old RingSubscriber::size()/empty()/peek() accessors have no
+ * equivalent in the new design -- §5.7 deliberately omits backlog
+ * bookkeeping a consumer doesn't need (fast consumers are the expected
+ * case; see docs/design_ring_zero_copy.md §5.7). This test now checks
+ * pop_ex()'s has_value()/no-value contract directly instead of through
+ * the removed size()/empty()/peek() accessors.
+ */
+TEST(Ring, PopExHasValueContract) {
+    const char* topic = "test_ring_popex_contract";
+    platform::shm_destroy("/sbr_test_ring_popex_contract");
 
-    RingPublisher<Odometry, 8> pub;
-    ASSERT_TRUE(pub.open(topic));
+    RingConfig cfg; cfg.capacity = 8;
+    RingPublisher<Odometry> pub;
+    ASSERT_TRUE(pub.open(topic, cfg));
 
-    RingSubscriber<Odometry, 8> sub;
-    ASSERT_TRUE(sub.attach(topic, 1000));
+    RingSubscriber<Odometry> sub;
+    ASSERT_TRUE(sub.try_attach(topic, cfg));
 
-    EXPECT_EQ(sub.size(), 0u);
-    EXPECT_TRUE(sub.empty());
+    EXPECT_FALSE(sub.pop_ex().has_value());
 
     Odometry o{}; o.x = 42.0;
     pub.push(o);
 
-    EXPECT_EQ(sub.size(), 1u);
-    auto peek = sub.peek();
-    ASSERT_TRUE(peek.has_value());
-    EXPECT_DOUBLE_EQ(peek->x, 42.0);
-    EXPECT_EQ(sub.size(), 1u);  /* peek doesn't consume */
-
-    sub.pop();
-    EXPECT_EQ(sub.size(), 0u);
+    auto item = sub.pop_ex();
+    ASSERT_TRUE(item.has_value());
+    EXPECT_DOUBLE_EQ(item->value.x, 42.0);
+    EXPECT_FALSE(sub.pop_ex().has_value());  /* consumed */
 }
 
+/*
+ * The old version of this test looped "until exactly N items have been
+ * received," relying on push()'s old reject-on-full return value to
+ * throttle the writer thread (push() returned false while full, so `i`
+ * didn't advance until the reader made room -- implicit backpressure).
+ * That contract no longer exists (F-1): push() always succeeds now, so a
+ * writer racing far ahead of a reader can overwrite data the reader never
+ * gets a chance to see -- by design, indistinguishable from a slow reader
+ * (R-6, accepted risk, §7). Looping until the reader has *received*
+ * exactly N can hang forever under the new contract when N exceeds the
+ * ring's capacity by orders of magnitude, since most pushes are
+ * guaranteed to be overwritten before the reader thread is even
+ * scheduled once -- this is exactly the bug this rewrite fixes, caught
+ * by a real hang during phase 7 verification, not a hypothetical.
+ *
+ * Rewritten to bound the reader's loop by the writer's completion (plus
+ * one final drain for whatever's left) instead of by a received count
+ * the new contract can't promise, and to check monotonicity of what *is*
+ * received (the single producer's voltage values strictly increase, and
+ * the per-consumer cursor never moves backward, so a drained sequence
+ * must be strictly increasing regardless of how many items were skipped
+ * in between) as a stronger correctness signal than a bare count.
+ */
 TEST(Ring, Throughput) {
     const char* topic = "test_ring_throughput";
-    ::shm_unlink("/sbr_test_ring_throughput");
+    platform::shm_destroy("/sbr_test_ring_throughput");
 
-    RingPublisher<BatteryState, 64> pub;
-    ASSERT_TRUE(pub.open(topic));
+    RingConfig cfg; cfg.capacity = 64;
+    RingPublisher<BatteryState> pub;
+    ASSERT_TRUE(pub.open(topic, cfg));
 
-    RingSubscriber<BatteryState, 64> sub;
-    ASSERT_TRUE(sub.attach(topic, 1000));
+    RingSubscriber<BatteryState> sub;
+    ASSERT_TRUE(sub.try_attach(topic, cfg));
 
     constexpr int N = 10000;
-    std::atomic<int> received{0};
+    std::atomic<int>  received{0};
+    std::atomic<bool> producer_done{false};
+    std::atomic<bool> monotonic{true};
+    float last_voltage = -1.0f;
 
     std::thread writer([&] {
-        for (int i = 0; i < N; ) {
+        for (int i = 0; i < N; ++i) {
             BatteryState b{}; b.voltage = static_cast<float>(i);
-            if (pub.push(b)) ++i;
+            pub.push(b);
         }
+        producer_done.store(true, std::memory_order_release);
     });
 
+    auto drain_once = [&] {
+        sub.drain_ex([&](const BatteryState& b, uint64_t /*write_ns*/) {
+            if (b.voltage <= last_voltage) monotonic.store(false, std::memory_order_relaxed);
+            last_voltage = b.voltage;
+            received.fetch_add(1, std::memory_order_relaxed);
+        });
+    };
+
     std::thread reader([&] {
-        while (received.load(std::memory_order_relaxed) < N) {
-            sub.drain([&](const BatteryState&) {
-                received.fetch_add(1, std::memory_order_relaxed);
-            });
-        }
+        while (!producer_done.load(std::memory_order_acquire)) drain_once();
+        drain_once(); /* final catch-up drain after the writer is done */
     });
 
     writer.join();
     reader.join();
-    EXPECT_EQ(received.load(), N);
+
+    /* Can't assert received == N any more (R-6) -- only that the ring
+     * delivered a sane, non-corrupted subset: at least a full window's
+     * worth survived to the end (start_idx/end_idx always keep capacity_n
+     * live items available), never more than N were ever pushed, and
+     * every value actually received was in increasing publish order. */
+    EXPECT_GE(received.load(), 64) << "at least one full ring window should have survived to the final drain";
+    EXPECT_LE(received.load(), N);
+    EXPECT_TRUE(monotonic.load()) << "received values must be strictly increasing (single producer, cursor never moves backward)";
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -303,7 +365,7 @@ TEST(Node, MakeNode) {
 }
 
 TEST(Node, KeepLatestPubSub) {
-    ::shm_unlink("/sb_kltest_pose");
+    platform::shm_destroy("/sb_kltest_pose");
 
     auto pub_node = make_node("kl_pub");
     auto sub_node = make_node("kl_sub");
@@ -344,7 +406,7 @@ TEST(Node, KeepLatestPubSub) {
 }
 
 TEST(Node, RingPubSub) {
-    ::shm_unlink("/sbr_ringtest_twist");
+    platform::shm_destroy("/sbr_ringtest_twist");
 
     auto pub_node = make_node("ring_pub");
     auto sub_node = make_node("ring_sub");
@@ -376,6 +438,73 @@ TEST(Node, RingPubSub) {
     if (got) EXPECT_FLOAT_EQ(received.vx, 5.0f);
 }
 
+/*
+ * R-9's full mitigation (§5.8's resilient-loop case 2: a closed publisher
+ * must trigger a full detach()/re-attach() cycle, not just a flag clear)
+ * was only exercised directly against RingSubscriber in test_ring.cpp's
+ * RingResilience.ReattachAfterCloseGetsFreshCursor -- that test calls
+ * detach() itself, proving the primitive works when a caller drives it
+ * correctly. It never verified that node.hpp's own automatic
+ * spin_once()-driven subscription actually drives it: without this
+ * wiring, a sensor node restarting mid-run would silently and
+ * permanently stop delivering to any node.hpp ring subscription of its
+ * topic, for the life of the subscriber process -- exactly the kind of
+ * failure R-9 exists to prevent. This test proves the full node.hpp
+ * stack recovers on its own, with no manual detach() call anywhere in
+ * this test.
+ */
+TEST(Node, RingSubscriptionAutoReattachesAfterPublisherClose) {
+    platform::shm_destroy("/sbr_ringtest_reattach");
+
+    auto sub_node = make_node("reattach_sub");
+
+    Twist received{};
+    bool  got_first = false, got_second = false;
+    sub_node->create_subscription<Twist>(
+        "ringtest_reattach", SystemDefaultsQoS(), [&](const Twist& m) {
+            received = m;
+            if (m.vx == 1.0f) got_first = true;
+            else if (m.vx == 2.0f) got_second = true;
+        });
+
+    {
+        auto pub_node = make_node("reattach_pub1");
+        auto pub = pub_node->create_publisher<Twist>("ringtest_reattach", SystemDefaultsQoS());
+        Twist t{}; t.vx = 1.0f;
+        for (int i = 0; i < 20 && !got_first; ++i) {
+            pub->publish(t);
+            sub_node->spin_once();
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        /* pub_node (and pub1) go out of scope here -- the publisher closes,
+         * exactly like a sensor node process restarting. */
+    }
+    ASSERT_TRUE(got_first) << "first publisher's message never arrived";
+
+    /* Give spin_once() a chance to observe is_closed() and detach() before
+     * the new publisher opens -- not required for correctness (try_attach
+     * would still eventually succeed against the new segment either way),
+     * but makes the two phases of this test unambiguous. */
+    for (int i = 0; i < 5; ++i) {
+        sub_node->spin_once();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    auto pub_node2 = make_node("reattach_pub2");
+    auto pub2 = pub_node2->create_publisher<Twist>("ringtest_reattach", SystemDefaultsQoS());
+    Twist t2{}; t2.vx = 2.0f;
+    for (int i = 0; i < 30 && !got_second; ++i) {
+        pub2->publish(t2);
+        sub_node->spin_once();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    EXPECT_TRUE(got_second)
+        << "subscription never recovered after the publisher restarted -- "
+           "node.hpp's ring branch did not auto-detach/reattach (R-9)";
+    if (got_second) { EXPECT_FLOAT_EQ(received.vx, 2.0f); }
+}
+
 TEST(Node, SpinFor) {
     auto node = make_node("spin_for_node");
     int  count = 0;
@@ -397,7 +526,7 @@ TEST(Node, SpinFor) {
 /* ── DirectPublish via handle ─────────────────────────────────────────────── */
 
 TEST(Node, DirectPublishHandle) {
-    ::shm_unlink("/sb_dp_seqlock_pose");
+    platform::shm_destroy("/sb_dp_seqlock_pose");
 
     auto pub_node = make_node("dp_pub");
     auto sub_node = make_node("dp_sub");
@@ -464,7 +593,7 @@ TEST(MessageQueue, BoundedDrop) {
 }
 
 TEST(Node, CreateQueueSeqlock) {
-    ::shm_unlink("/sb_cq_seqlock_pose");
+    platform::shm_destroy("/sb_cq_seqlock_pose");
 
     auto pub_node = make_node("cq_pub");
     auto sub_node = make_node("cq_sub");
@@ -488,7 +617,7 @@ TEST(Node, CreateQueueSeqlock) {
 }
 
 TEST(Node, CreateQueueRing) {
-    ::shm_unlink("/sbr_cq_ring_twist");
+    platform::shm_destroy("/sbr_cq_ring_twist");
 
     auto pub_node = make_node("cqr_pub");
     auto sub_node = make_node("cqr_sub");
@@ -530,70 +659,31 @@ TEST(Node, SpinOnceNonBlockingWhenNoPublisher) {
     EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(dt).count(), 50);
 }
 
-/* ── Ring::skip_old ───────────────────────────────────────────────────────── */
-
-TEST(Ring, SkipOldKeepsLatestN) {
-    const char* topic = "test_ring_skipold";
-    ::shm_unlink("/sbr_test_ring_skipold");
-
-    RingPublisher<Pose2d, 8> pub;
-    ASSERT_TRUE(pub.open(topic));
-
-    RingSubscriber<Pose2d, 8> sub;
-    ASSERT_TRUE(sub.attach(topic, 1000));
-
-    /* Push 5 messages: x = 0 .. 4 */
-    for (int i = 0; i < 5; ++i) {
-        Pose2d m{}; m.x = static_cast<double>(i);
-        ASSERT_TRUE(pub.push(m));
-    }
-    EXPECT_EQ(sub.size(), 5u);
-
-    /* Keep only the 3 newest: should drop 2 (x=0,1), keep x=2,3,4. */
-    uint32_t dropped = sub.skip_old(3);
-    EXPECT_EQ(dropped, 2u);
-    EXPECT_EQ(sub.size(), 3u);
-
-    for (double expected = 2.0; expected <= 4.0; ++expected) {
-        auto item = sub.pop();
-        ASSERT_TRUE(item.has_value());
-        EXPECT_DOUBLE_EQ(item->x, expected);
-    }
-    EXPECT_TRUE(sub.empty());
-}
-
-TEST(Ring, SkipOldNoop) {
-    const char* topic = "test_ring_skipnoop";
-    ::shm_unlink("/sbr_test_ring_skipnoop");
-
-    RingPublisher<Pose2d, 8> pub;
-    ASSERT_TRUE(pub.open(topic));
-
-    RingSubscriber<Pose2d, 8> sub;
-    ASSERT_TRUE(sub.attach(topic, 1000));
-
-    for (int i = 0; i < 3; ++i) {
-        Pose2d m{}; m.x = static_cast<double>(i);
-        pub.push(m);
-    }
-
-    /* keep_n >= avail → nothing dropped */
-    EXPECT_EQ(sub.skip_old(3), 0u);
-    EXPECT_EQ(sub.skip_old(10), 0u);
-    EXPECT_EQ(sub.size(), 3u);
-}
+/*
+ * ── Ring::skip_old (removed) ─────────────────────────────────────────────
+ *
+ * skip_old() no longer exists: the new overwrite-on-full ring (F-1) caps a
+ * lagging consumer's backlog automatically (a stale cursor silently
+ * resyncs to start_idx on its next read, §5.7) instead of requiring an
+ * explicit "drop everything but the newest N" call before draining.
+ * node.hpp's create_subscription ring branch, which used to call
+ * skip_old() before drain(), now just calls drain_ex() directly (see
+ * node.hpp's create_subscription) -- there is nothing left for a
+ * skip_old-shaped test to exercise.
+ */
 
 /* ── Ring::pop_latest ─────────────────────────────────────────────────────── */
 
 TEST(Ring, PopLatestGetsNewest) {
     const char* topic = "test_ring_poplatest";
-    ::shm_unlink("/sbr_test_ring_poplatest");
+    platform::shm_destroy("/sbr_test_ring_poplatest");
 
-    RingPublisher<Pose2d, 8> pub;
-    ASSERT_TRUE(pub.open(topic));
+    RingConfig cfg; cfg.capacity = 8;
+    RingPublisher<Pose2d> pub;
+    ASSERT_TRUE(pub.open(topic, cfg));
 
-    RingSubscriber<Pose2d, 8> sub;
-    ASSERT_TRUE(sub.attach(topic, 1000));
+    RingSubscriber<Pose2d> sub;
+    ASSERT_TRUE(sub.try_attach(topic, cfg));
 
     /* Push 4 messages: x = 0 .. 3 */
     for (int i = 0; i < 4; ++i) {
@@ -603,40 +693,42 @@ TEST(Ring, PopLatestGetsNewest) {
 
     auto latest = sub.pop_latest();
     ASSERT_TRUE(latest.has_value());
-    EXPECT_DOUBLE_EQ(latest->x, 3.0);   /* newest item */
-    EXPECT_TRUE(sub.empty());            /* all consumed */
+    EXPECT_DOUBLE_EQ(latest->value.x, 3.0);   /* newest item */
+    EXPECT_FALSE(sub.pop_ex().has_value());    /* all consumed */
 }
 
 TEST(Ring, PopLatestEmpty) {
     const char* topic = "test_ring_plat_empty";
-    ::shm_unlink("/sbr_test_ring_plat_empty");
+    platform::shm_destroy("/sbr_test_ring_plat_empty");
 
-    RingPublisher<Pose2d, 4> pub;
-    ASSERT_TRUE(pub.open(topic));
+    RingConfig cfg; cfg.capacity = 4;
+    RingPublisher<Pose2d> pub;
+    ASSERT_TRUE(pub.open(topic, cfg));
 
-    RingSubscriber<Pose2d, 4> sub;
-    ASSERT_TRUE(sub.attach(topic, 1000));
+    RingSubscriber<Pose2d> sub;
+    ASSERT_TRUE(sub.try_attach(topic, cfg));
 
     EXPECT_FALSE(sub.pop_latest().has_value());
 }
 
 TEST(Ring, PopLatestSingle) {
     const char* topic = "test_ring_plat_single";
-    ::shm_unlink("/sbr_test_ring_plat_single");
+    platform::shm_destroy("/sbr_test_ring_plat_single");
 
-    RingPublisher<Pose2d, 4> pub;
-    ASSERT_TRUE(pub.open(topic));
+    RingConfig cfg; cfg.capacity = 4;
+    RingPublisher<Pose2d> pub;
+    ASSERT_TRUE(pub.open(topic, cfg));
 
-    RingSubscriber<Pose2d, 4> sub;
-    ASSERT_TRUE(sub.attach(topic, 1000));
+    RingSubscriber<Pose2d> sub;
+    ASSERT_TRUE(sub.try_attach(topic, cfg));
 
     Pose2d m{}; m.x = 99.0;
     pub.push(m);
 
     auto item = sub.pop_latest();
     ASSERT_TRUE(item.has_value());
-    EXPECT_DOUBLE_EQ(item->x, 99.0);
-    EXPECT_TRUE(sub.empty());
+    EXPECT_DOUBLE_EQ(item->value.x, 99.0);
+    EXPECT_FALSE(sub.pop_ex().has_value());
 }
 
 /* ── LatestSlot<T> ────────────────────────────────────────────────────────── */
@@ -688,7 +780,7 @@ TEST(LatestSlot, Clear) {
 /* ── Node::create_latest ──────────────────────────────────────────────────── */
 
 TEST(Node, CreateLatestSeqlock) {
-    ::shm_unlink("/sb_cl_seqlock_pose");
+    platform::shm_destroy("/sb_cl_seqlock_pose");
 
     auto pub_node = make_node("cl_seq_pub");
     auto sub_node = make_node("cl_seq_sub");
@@ -716,7 +808,7 @@ TEST(Node, CreateLatestSeqlock) {
 }
 
 TEST(Node, CreateLatestRing) {
-    ::shm_unlink("/sbr_cl_ring_twist");
+    platform::shm_destroy("/sbr_cl_ring_twist");
 
     auto pub_node = make_node("cl_ring_pub");
     auto sub_node = make_node("cl_ring_sub");
